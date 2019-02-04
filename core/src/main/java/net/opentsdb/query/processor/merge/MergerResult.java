@@ -1,5 +1,5 @@
 // This file is part of OpenTSDB.
-// Copyright (C) 2017  The OpenTSDB Authors.
+// Copyright (C) 2018  The OpenTSDB Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -20,6 +20,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 
+import com.google.common.base.Strings;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.reflect.TypeToken;
@@ -54,6 +55,10 @@ public class MergerResult implements QueryResult {
   /** The map of hash codes to groups. */
   protected final Map<Long, TimeSeries> groups;
   
+  /** Errors or exceptions from downstream. */
+  protected String error;
+  protected Throwable exception;
+  
   /**
    * The default ctor.
    * @param node The non-null group by node this result belongs to.
@@ -87,7 +92,13 @@ public class MergerResult implements QueryResult {
    * Join the series.
    */
   void join() {
+    int with_error = 0;
     for (final QueryResult next : this.next) {
+      if (!Strings.isNullOrEmpty(next.error())) {
+        with_error++;
+        continue;
+      }
+      
       for (final TimeSeries series : next.timeSeries()) {
         final long hash = series.id().buildHashCode();
         TimeSeries ts = groups.get(hash);
@@ -97,6 +108,12 @@ public class MergerResult implements QueryResult {
         }
         ((MergerTimeSeries) ts).addSource(series);
       }
+    }
+    
+    if (with_error == next.size()) {
+      // TODO - maybe find a common error, otherwise pick one.
+      error = next.get(0).error();
+      exception = next.get(0).exception();
     }
   }
   
@@ -111,6 +128,16 @@ public class MergerResult implements QueryResult {
   }
   
   @Override
+  public String error() {
+    return error;
+  }
+  
+  @Override
+  public Throwable exception() {
+    return exception;
+  }
+  
+  @Override
   public long sequenceId() {
     return next.get(0).sequenceId();
   }
@@ -122,7 +149,7 @@ public class MergerResult implements QueryResult {
 
   @Override
   public String dataSource() {
-    return next.get(0).dataSource();
+    return node.config().getId();
   }
   
   @Override

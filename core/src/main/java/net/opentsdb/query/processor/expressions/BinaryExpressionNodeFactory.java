@@ -37,7 +37,6 @@ import net.opentsdb.query.QueryNode;
 import net.opentsdb.query.QueryNodeConfig;
 import net.opentsdb.query.QueryPipelineContext;
 import net.opentsdb.query.QueryResult;
-import net.opentsdb.query.TimeSeriesQuery;
 import net.opentsdb.query.plan.QueryPlanner;
 import net.opentsdb.query.processor.BaseQueryNodeFactory;
 import net.opentsdb.query.processor.expressions.ExpressionParseNode.ExpressionOp;
@@ -179,6 +178,21 @@ public class BinaryExpressionNodeFactory extends BaseQueryNodeFactory {
     }
     builder.setExpressionConfig(ExpressionConfig.parse(mapper, tsdb, n));
     
+    n = node.get("as");
+    if (n != null && !n.isNull()) {
+      builder.setAs(n.asText());
+    }
+    
+    n = node.get("leftId");
+    if (n != null && !n.isNull()) {
+      builder.setLeftId(n.asText());
+    }
+    
+    n = node.get("rightId");
+    if (n != null && !n.isNull()) {
+      builder.setRightId(n.asText());
+    }
+    
     n = node.get("id");
     if (n == null || n.isNull()) {
       throw new IllegalArgumentException("Missing ID for node config");
@@ -190,7 +204,7 @@ public class BinaryExpressionNodeFactory extends BaseQueryNodeFactory {
 
   @Override
   public void setupGraph(
-      final TimeSeriesQuery query, 
+      final QueryPipelineContext context, 
       final QueryNodeConfig config,
       final QueryPlanner plan) {
     // nothing to do here.

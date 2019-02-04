@@ -20,6 +20,7 @@ import java.util.Set;
 
 import io.netty.util.HashedWheelTimer;
 import net.opentsdb.configuration.ConfigurationValueValidator.ValidationResult;
+import net.opentsdb.configuration.provider.BaseProvider;
 import net.opentsdb.configuration.provider.Provider;
 import net.opentsdb.configuration.provider.ProviderFactory;
 import net.opentsdb.configuration.provider.RuntimeOverrideProvider;
@@ -110,14 +111,13 @@ public class UnitTestConfiguration extends Configuration {
     }
   }
   
-  public static class UnitTestProvider extends Provider {
+  public static class UnitTestProvider extends BaseProvider {
     private Map<String, String> kvs;
     
     public UnitTestProvider(final ProviderFactory factory, 
                             final Configuration config,
-                            final HashedWheelTimer timer, 
-                            final Set<String> reload_keys) {
-      super(factory, config, timer, reload_keys);
+                            final HashedWheelTimer timer) {
+      super(factory, config, timer);
     }
 
     @Override
@@ -157,9 +157,8 @@ public class UnitTestConfiguration extends Configuration {
 
     @Override
     public Provider newInstance(final Configuration config, 
-                                final HashedWheelTimer timer,
-                                final Set<String> reload_keys) {
-      return new UnitTestProvider(this, config, timer, reload_keys);
+                                final HashedWheelTimer timer) {
+      return new UnitTestProvider(this, config, timer);
     }
 
     @Override

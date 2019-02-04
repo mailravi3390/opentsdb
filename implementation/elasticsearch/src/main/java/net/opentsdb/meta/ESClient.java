@@ -15,17 +15,21 @@
 package net.opentsdb.meta;
 
 import java.util.List;
+import java.util.Map;
 
+import org.elasticsearch.action.search.MultiSearchResponse;
+import org.elasticsearch.action.search.SearchRequestBuilder;
 import org.elasticsearch.action.search.SearchResponse;
-import org.elasticsearch.index.query.QueryBuilder;
+import org.elasticsearch.search.builder.SearchSourceBuilder;
 
 import com.stumbleupon.async.Deferred;
 
+import net.opentsdb.query.QueryPipelineContext;
 import net.opentsdb.stats.Span;
 
 /**
  * The basic interface for interacting with an ElasticSearch cluster.
- * 
+ *
  * @since 3.0
  */
 public interface ESClient {
@@ -34,15 +38,13 @@ public interface ESClient {
    * Executes the given query against a single or multiple clusters and
    * returns the results in a list, one per cluster.
    * @param query The query to execute.
-   * @param index The index to search.
-   * @param The number of records to return in the results.
+   * @param context The non-null query pipeline context.
    * @param span An optional tracing span.
-   * @return A deferred resolving to a list of search response objects 
+   * @return A deferred resolving to a list of search response objects
    * or an exception if the query couldn't execute.
    */
-  public Deferred<List<SearchResponse>> runQuery(final QueryBuilder query, 
-                                                 final String index,
-                                                 final int size,
-                                                 final Span span);
-  
+  public Deferred<Map<String, MultiSearchResponse>> runQuery(final Map<String, SearchSourceBuilder> query,
+                                                             final QueryPipelineContext context,
+                                                             final Span span);
+
 }

@@ -14,7 +14,6 @@
 // limitations under the License.
 package net.opentsdb.query;
 
-import java.time.temporal.ChronoUnit;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
@@ -22,25 +21,19 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import org.jgrapht.graph.DefaultEdge;
-import org.jgrapht.traverse.BreadthFirstIterator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
-import com.google.common.reflect.TypeToken;
+import com.google.common.graph.Traverser;
 import com.stumbleupon.async.Callback;
 import com.stumbleupon.async.Deferred;
 
 import net.opentsdb.core.TSDB;
-import net.opentsdb.data.TimeSeries;
 import net.opentsdb.data.TimeSeriesDataSource;
-import net.opentsdb.data.TimeSeriesId;
-import net.opentsdb.data.TimeSpecification;
 import net.opentsdb.query.plan.DefaultQueryPlanner;
-import net.opentsdb.rollup.RollupConfig;
 import net.opentsdb.stats.Span;
 
 /**
@@ -94,11 +87,6 @@ public abstract class AbstractQueryPipelineContext implements QueryPipelineConte
       throw new IllegalArgumentException("The context cannot be null.");
     }
     this.context = context;
-    if (context.sinkConfigs() == null || 
-        context.sinkConfigs().isEmpty()) {
-      throw new IllegalArgumentException("The query must have at least "
-          + "one sink config.");
-    }
     plan = new DefaultQueryPlanner(this, (QueryNode) this);
     sinks = Lists.newArrayListWithExpectedSize(1);
     countdowns = Maps.newHashMap();
@@ -124,18 +112,14 @@ public abstract class AbstractQueryPipelineContext implements QueryPipelineConte
     if (node == null) {
       throw new IllegalArgumentException("Node cannot be null.");
     }
-    if (!plan.graph().containsVertex(node)) {
-      throw new IllegalArgumentException("The given node wasn't in this graph: " 
-          + node);
-    }
-    final Set<DefaultEdge> upstream = plan.graph().incomingEdgesOf(node);
+    final Set<QueryNode> upstream = plan.graph().predecessors(node);
     if (upstream.isEmpty()) {
       return Collections.emptyList();
     }
     final List<QueryNode> listeners = Lists.newArrayListWithCapacity(
         upstream.size());
-    for (final DefaultEdge e : upstream) {
-      listeners.add(plan.graph().getEdgeSource(e));
+    for (final QueryNode e : upstream) {
+      listeners.add(e);
     }
     return listeners;
   }
@@ -145,18 +129,14 @@ public abstract class AbstractQueryPipelineContext implements QueryPipelineConte
     if (node == null) {
       throw new IllegalArgumentException("Node cannot be null.");
     }
-    if (!plan.graph().containsVertex(node)) {
-      throw new IllegalArgumentException("The given node wasn't in this graph: " 
-          + node);
-    }
-    final Set<DefaultEdge> downstream = plan.graph().outgoingEdgesOf(node);
+    final Set<QueryNode> downstream = plan.graph().successors(node);
     if (downstream.isEmpty()) {
       return Collections.emptyList();
     }
     final List<QueryNode> downstreams = Lists.newArrayListWithCapacity(
         downstream.size());
-    for (final DefaultEdge e : downstream) {
-      downstreams.add(plan.graph().getEdgeTarget(e));
+    for (final QueryNode n : downstream) {
+      downstreams.add(n);
     }
     return downstreams;
   }
@@ -166,26 +146,21 @@ public abstract class AbstractQueryPipelineContext implements QueryPipelineConte
     if (node == null) {
       throw new IllegalArgumentException("Node cannot be null.");
     }
-    if (!plan.graph().containsVertex(node)) {
-      throw new IllegalArgumentException("The given node wasn't in this graph: " 
-          + node);
-    }
-    final Set<DefaultEdge> downstream = plan.graph().outgoingEdgesOf(node);
+    final Set<QueryNode> downstream = plan.graph().successors(node);
     if (downstream.isEmpty()) {
       return Collections.emptyList();
     }
     final Set<TimeSeriesDataSource> downstreams = Sets.newHashSetWithExpectedSize(
         downstream.size());
-    for (final DefaultEdge e : downstream) {
-      final QueryNode target = plan.graph().getEdgeTarget(e);
-      if (downstreams.contains(target)) {
+    for (final QueryNode n : downstream) {
+      if (downstreams.contains(n)) {
         continue;
       }
       
-      if (target instanceof TimeSeriesDataSource) {
-        downstreams.add((TimeSeriesDataSource) target);
+      if (n instanceof TimeSeriesDataSource) {
+        downstreams.add((TimeSeriesDataSource) n);
       } else {
-        downstreams.addAll(downstreamSources(target));
+        downstreams.addAll(downstreamSources(n));
       }
     }
     return downstreams;
@@ -196,20 +171,11 @@ public abstract class AbstractQueryPipelineContext implements QueryPipelineConte
     if (node == null) {
       throw new IllegalArgumentException("Node cannot be null.");
     }
-    if (!plan.graph().containsVertex(node)) {
-      throw new IllegalArgumentException("The given node wasn't in this graph: " 
-          + node);
-    }
-    if (node.config() instanceof TimeSeriesDataSourceConfig ||
-        node.config().joins()) {
-      return Sets.newHashSet(node.config().getId());
-    }
     
-    final Set<String> ids = Sets.newHashSet();
-    for (final DefaultEdge edge : plan.graph().outgoingEdgesOf(node)) {
-      final QueryNode downstream = plan.graph().getEdgeTarget(edge);
-      final Set<String> downstream_ids = (Set<String>) downstreamSourcesIds(downstream);
-      ids.addAll(downstream_ids);
+    Collection<TimeSeriesDataSource> downstreams = downstreamSources(node);
+    final Set<String> ids = Sets.newHashSetWithExpectedSize(downstreams.size());
+    for (final QueryNode downstream : downstreams) {
+      ids.add(downstream.config().getId());
     }
     return ids;
   }
@@ -223,19 +189,14 @@ public abstract class AbstractQueryPipelineContext implements QueryPipelineConte
     if (type == null) {
       throw new IllegalArgumentException("Type cannot be null.");
     }
-    if (!plan.graph().containsVertex(node)) {
-      throw new IllegalArgumentException("The given node wasn't in this graph: " 
-          + node);
-    }
     
-    final Set<DefaultEdge> upstream = plan.graph().incomingEdgesOf(node);
+    final Set<QueryNode> upstream = plan.graph().predecessors(node);
     if (upstream.isEmpty()) {
       return Collections.emptyList();
     }
     
     List<QueryNode> upstreams = null;
-    for (final DefaultEdge e : upstream) {
-      final QueryNode source = plan.graph().getEdgeSource(e);
+    for (final QueryNode source : upstream) {
       if (source.getClass().equals(type)) {
         if (upstreams == null) {
           upstreams = Lists.newArrayList();
@@ -264,27 +225,22 @@ public abstract class AbstractQueryPipelineContext implements QueryPipelineConte
     if (type == null) {
       throw new IllegalArgumentException("Type cannot be null.");
     }
-    if (!plan.graph().containsVertex(node)) {
-      throw new IllegalArgumentException("The given node wasn't in this graph: " 
-          + node);
-    }
     
-    final Set<DefaultEdge> downstream = plan.graph().outgoingEdgesOf(node);
+    final Set<QueryNode> downstream = plan.graph().successors(node);
     if (downstream.isEmpty()) {
       return Collections.emptyList();
     }
     
     List<QueryNode> downstreams = null;
-    for (final DefaultEdge e : downstream) {
-      final QueryNode target = plan.graph().getEdgeTarget(e);
-      if (target.getClass().equals(type)) {
+    for (final QueryNode n : downstream) {
+      if (n.getClass().equals(type)) {
         if (downstreams == null) {
           downstreams = Lists.newArrayList();
         }
-        downstreams.add(target);
+        downstreams.add(n);
       } else {
         final Collection<QueryNode> downstream_of_target = 
-            downstreamOfType(target, type);
+            downstreamOfType(n, type);
         if (!downstream_of_target.isEmpty()) {
           if (downstreams == null) {
             downstreams = Lists.newArrayList();
@@ -307,11 +263,9 @@ public abstract class AbstractQueryPipelineContext implements QueryPipelineConte
   }
   
   @Override
-  public void close() {
-    final BreadthFirstIterator<QueryNode, DefaultEdge> bf_iterator = 
-        new BreadthFirstIterator<QueryNode, DefaultEdge>(plan.graph());
-    while (bf_iterator.hasNext()) {
-      final QueryNode node = bf_iterator.next();
+  public void close() {    
+    Traverser<QueryNode> traverser = Traverser.forGraph(plan.graph());
+    for (final QueryNode node : traverser.breadthFirst(this)) {
       if (node == this) {
         continue;
       }
@@ -416,20 +370,22 @@ public abstract class AbstractQueryPipelineContext implements QueryPipelineConte
       public Void call(final Void ignored) throws Exception {
 
         // setup sinks if the graph is happy
-        for (final QuerySinkConfig config : context.sinkConfigs()) {
-          final QuerySinkFactory factory = context.tsdb().getRegistry()
-              .getPlugin(QuerySinkFactory.class, config.getId());
-          if (factory == null) {
-            throw new IllegalArgumentException("No sink factory found for: " 
-                + config.getId());
+        if (context.sinkConfigs() != null) {
+          for (final QuerySinkConfig config : context.sinkConfigs()) {
+            final QuerySinkFactory factory = context.tsdb().getRegistry()
+                .getPlugin(QuerySinkFactory.class, config.getId());
+            if (factory == null) {
+              throw new IllegalArgumentException("No sink factory found for: " 
+                  + config.getId());
+            }
+            
+            final QuerySink sink = factory.newSink(context, config);
+            if (sink == null) {
+              throw new IllegalArgumentException("Factory returned a null sink for: " 
+                  + config.getId());
+            }
+            sinks.add(sink);
           }
-          
-          final QuerySink sink = factory.newSink(context, config);
-          if (sink == null) {
-            throw new IllegalArgumentException("Factory returned a null sink for: " 
-                + config.getId());
-          }
-          sinks.add(sink);
         }
         
         for (final String source : plan.serializationSources()) {
@@ -444,7 +400,8 @@ public abstract class AbstractQueryPipelineContext implements QueryPipelineConte
       }
     }
     
-    return plan.plan(child).addCallback(new PlanCB());
+    return plan.plan(child)
+               .addCallback(new PlanCB());
   }
   
   /**
@@ -475,52 +432,15 @@ public abstract class AbstractQueryPipelineContext implements QueryPipelineConte
    * A simple pass-through wrapper that will decrement the proper counter
    * when the result is closed.
    */
-  private class ResultWrapper implements QueryResult {
-    
-    private final QueryResult result;
+  private class ResultWrapper extends BaseWrappedQueryResult {
     
     ResultWrapper(final QueryResult result) {
-      this.result = result;
+      super(result);
     }
-
-    @Override
-    public TimeSpecification timeSpecification() {
-      return result.timeSpecification();
-    }
-
-    @Override
-    public Collection<TimeSeries> timeSeries() {
-      return result.timeSeries();
-    }
-
-    @Override
-    public long sequenceId() {
-      return result.sequenceId();
-    }
-
+    
     @Override
     public QueryNode source() {
       return result.source();
-    }
-
-    @Override
-    public TypeToken<? extends TimeSeriesId> idType() {
-      return result.idType();
-    }
-
-    @Override
-    public ChronoUnit resolution() {
-      return result.resolution();
-    }
-
-    @Override
-    public RollupConfig rollupConfig() {
-      return result.rollupConfig();
-    }
-
-    @Override
-    public String dataSource() {
-      return result.dataSource();
     }
     
     @Override
@@ -539,7 +459,6 @@ public abstract class AbstractQueryPipelineContext implements QueryPipelineConte
         LOG.error("Failed to close result: " + result, t);
       }
     }
-    
   }
   
 }

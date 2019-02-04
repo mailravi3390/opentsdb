@@ -14,6 +14,7 @@
 // limitations under the License.
 package net.opentsdb.servlet.resources;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 
 import javax.servlet.AsyncContext;
@@ -25,6 +26,7 @@ import javax.servlet.http.HttpServletResponse;
 import javax.ws.rs.Consumes;
 import javax.ws.rs.POST;
 import javax.ws.rs.Path;
+import javax.ws.rs.Produces;
 import javax.ws.rs.WebApplicationException;
 import javax.ws.rs.core.Context;
 import javax.ws.rs.core.MediaType;
@@ -41,6 +43,7 @@ import net.opentsdb.auth.Authentication;
 import net.opentsdb.auth.AuthState.AuthStatus;
 import net.opentsdb.core.TSDB;
 import net.opentsdb.exceptions.QueryExecutionException;
+import net.opentsdb.query.QueryMode;
 import net.opentsdb.query.SemanticQuery;
 import net.opentsdb.query.SemanticQueryContext;
 import net.opentsdb.query.execution.serdes.JsonV2QuerySerdesOptions;
@@ -58,7 +61,7 @@ import net.opentsdb.utils.Bytes;
 import net.opentsdb.utils.JSON;
 import net.opentsdb.utils.YAML;
 
-@Path("api/query/graph")
+@Path("query/graph")
 public class RawQueryRpc {
   private static final Logger LOG = LoggerFactory.getLogger(RawQueryRpc.class);
   
@@ -73,9 +76,18 @@ public class RawQueryRpc {
   
   @POST
   @Consumes(MediaType.APPLICATION_JSON)
-  public void post(final @Context ServletConfig servlet_config, 
-                       final @Context HttpServletRequest request,
-                       final @Context HttpServletResponse response) throws Exception {
+  @Produces(MediaType.APPLICATION_JSON)
+  public Response post(final @Context ServletConfig servlet_config, 
+                       final @Context HttpServletRequest request/*,
+                       final @Context HttpServletResponse response*/) throws Exception {
+    final Object stream = request.getAttribute("DATA");
+    if (stream != null) {
+      return Response.ok()
+          .entity(((ByteArrayOutputStream) stream).toByteArray())
+          .header("Content-Type", "application/json")
+          .build();
+    }
+    
     Object obj = servlet_config.getServletContext()
         .getAttribute(OpenTSDBApplication.TSD_ATTRIBUTE);
     if (obj == null) {
@@ -183,13 +195,19 @@ public class RawQueryRpc {
             .setTrace(trace)
             .setQuerySpan(query_span)
             .build())
+        .setAuthState(auth_state)
         .addSink(ServletSinkConfig.newBuilder()
             .setId(ServletSinkFactory.TYPE)
             .setSerdesOptions(serdes)
-            .setResponse(response)
+            //.setResponse(response)
+            .setRequest(request)
             .setAsync(async)
             .build())
         .build();
+    
+    if (trace != null && query.isDebugEnabled()) {
+      context.logDebug("Trace ID: " + trace.traceId());
+    }
     
     class AsyncTimeout implements AsyncListener {
 
@@ -206,9 +224,17 @@ public class RawQueryRpc {
         } catch (Exception e) {
           LOG.error("Failed to close the query: ", e);
         }
+        
         GenericExceptionMapper.serialize(
             new QueryExecutionException("The query has exceeded "
-            + "the timeout limit.", 504), event.getSuppliedResponse());
+            + "the timeout limit.", 504), event.getAsyncContext().getResponse());
+        event.getAsyncContext().complete();
+        
+        try {
+          context.close();
+        } catch (Throwable t) {
+          LOG.error("Failed to close the query context", t);
+        }
       }
 
       @Override
@@ -224,23 +250,37 @@ public class RawQueryRpc {
     }
 
     async.addListener(new AsyncTimeout());
+    async.start(new Runnable() {
+      public void run() {
+        try {
+          context.initialize(query_span).join();
+          
+          if (query.getMode() == QueryMode.VALIDATE) {
+            async.getResponse().setContentType("application/json");
+            // TODO - here it would be better to write the query plan.
+            async.getResponse().getWriter().write("{\"status\":\"OK\"}");
+            ((HttpServletResponse) async.getResponse()).setStatus(200);
+            async.complete();
+            if (query_span != null) {
+              query_span.setSuccessTags().finish();
+            }
+            return;
+          }
+          context.fetchNext(query_span);
+        } catch (Throwable t) {
+          LOG.error("Unexpected exception triggering query.", t);
+          GenericExceptionMapper.serialize(t, async.getResponse());
     
-    try {
-      context.initialize(query_span).join();
-      context.fetchNext(query_span);
-    } catch (Throwable t) {
-      LOG.error("Unexpected exception triggering query.", t);
-//      if (execute_span != null) {
-//        execute_span.setErrorTags(e)
-//                    .finish();
-//      }
-      GenericExceptionMapper.serialize(t, response);
-      async.complete();
-      if (query_span != null) {
-        query_span.setErrorTags(t)
-                   .finish();
+          async.complete();
+          if (query_span != null) {
+            query_span.setErrorTags(t)
+                       .finish();
+          }
+          throw new QueryExecutionException("Unexpected expection", 500, t);
+        }
       }
-    }
+    });
+    return null;
   }
   
 }

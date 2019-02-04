@@ -43,7 +43,6 @@ import net.opentsdb.query.QueryPipelineContext;
 import net.opentsdb.query.TimeSeriesDataSourceConfig;
 import net.opentsdb.query.TimeSeriesQuery;
 import net.opentsdb.query.plan.QueryPlanner;
-import net.opentsdb.query.BaseTimeSeriesDataSourceConfig;
 import net.opentsdb.query.DefaultTimeSeriesDataSourceConfig;
 import net.opentsdb.query.processor.downsample.DownsampleConfig;
 import net.opentsdb.query.serdes.PBufSerdesFactory;
@@ -178,7 +177,6 @@ public class QueryGRPCClientFactory extends BaseTSDBPlugin
   public QueryRpcBetaStub stub() {
     return stub;
   }
-
   
   @Override
   public QueryNodeConfig parseConfig(final ObjectMapper mapper, 
@@ -188,9 +186,17 @@ public class QueryGRPCClientFactory extends BaseTSDBPlugin
   }
 
   @Override
-  public void setupGraph(final TimeSeriesQuery query, 
+  public void setupGraph(final QueryPipelineContext context, 
                          final QueryNodeConfig config,
                          final QueryPlanner planner) {
     // no-op
   }
+
+  @Override
+  public boolean supportsQuery(TimeSeriesQuery query,
+      TimeSeriesDataSourceConfig config) {
+    // TODO Auto-generated method stub
+    return true;
+  }
+  
 }

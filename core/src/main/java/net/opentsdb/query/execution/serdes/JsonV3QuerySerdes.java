@@ -47,6 +47,7 @@ import net.opentsdb.exceptions.QueryExecutionException;
 import net.opentsdb.query.QueryContext;
 import net.opentsdb.query.QueryNode;
 import net.opentsdb.query.QueryResult;
+import net.opentsdb.query.TimeSeriesQuery.LogLevel;
 import net.opentsdb.query.serdes.SerdesOptions;
 import net.opentsdb.query.serdes.TimeSeriesSerdes;
 import net.opentsdb.stats.Span;
@@ -58,6 +59,8 @@ public class JsonV3QuerySerdes implements TimeSeriesSerdes {
   private static final Logger LOG = LoggerFactory.getLogger(
       JsonV3QuerySerdes.class);
   
+  /** The query context. */
+  private final QueryContext context;
 
   /** The options for this serialization. */
   private final SerdesOptions options;
@@ -88,6 +91,7 @@ public class JsonV3QuerySerdes implements TimeSeriesSerdes {
     if (stream == null) {
       throw new IllegalArgumentException("Stream cannot be null.");
     }
+    this.context = context;
     this.options = options;
     try {
       json = JSON.getFactory().createGenerator(stream);
@@ -151,13 +155,15 @@ public class JsonV3QuerySerdes implements TimeSeriesSerdes {
             // TODO - ms, second, nanos, etc
             json.writeNumberField("start", result.timeSpecification().start().epoch());
             json.writeNumberField("end", result.timeSpecification().end().epoch());
-            json.writeStringField("intervalISO", result.timeSpecification().interval().toString());
+            json.writeStringField("intervalISO", result.timeSpecification().interval() != null ? 
+                result.timeSpecification().interval().toString() : "null");
             json.writeStringField("interval", result.timeSpecification().stringInterval());
             //json.writeNumberField("intervalNumeric", result.timeSpecification().interval().get(result.timeSpecification().units()));
             if (result.timeSpecification().timezone() != null) {
               json.writeStringField("timeZone", result.timeSpecification().timezone().toString());
             }
-            json.writeStringField("units", result.timeSpecification().units().toString());
+            json.writeStringField("units", result.timeSpecification().units() != null ? 
+                result.timeSpecification().units().toString() : "null");
             json.writeEndObject();
           }
           
@@ -255,6 +261,15 @@ public class JsonV3QuerySerdes implements TimeSeriesSerdes {
     try {
       // TODO - other bits like the query and trace data
       json.writeEndArray();
+      
+      if (context.query().getLogLevel() != LogLevel.OFF) {
+        json.writeArrayFieldStart("log");
+        for (final String log : context.logs()) {
+          json.writeString(log);
+        }
+        json.writeEndArray();
+      }
+      
       json.writeEndObject();
       json.flush();
     } catch (IOException e) {
@@ -440,9 +455,8 @@ public class JsonV3QuerySerdes implements TimeSeriesSerdes {
         long ts = (options != null && options.getMsResolution()) 
             ? value.timestamp().msEpoch() 
             : value.timestamp().msEpoch() / 1000;
-        final String ts_string = Long.toString(ts);
         if (value.value() == null) {
-          json.writeNullField(ts_string);
+          json.writeNull();
         } else {
           final NumericSummaryType v = ((TimeSeriesValue<NumericSummaryType>) value).value();
           json.writeStartArray();
@@ -516,7 +530,6 @@ public class JsonV3QuerySerdes implements TimeSeriesSerdes {
       }
     }
     json.writeEndArray();
-    
     json.writeEndObject();
   }
   

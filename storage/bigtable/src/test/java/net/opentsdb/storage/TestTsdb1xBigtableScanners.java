@@ -260,19 +260,17 @@ public class TestTsdb1xBigtableScanners extends UTBase {
           .setRowSpan("1d")
           .build()));
     
-    when(node.downsampleConfig()).thenReturn(
-        (DownsampleConfig) DownsampleConfig.newBuilder()
-        .setId("ds")
-        .setInterval("1h")
-        .setAggregator("avg")
-        .addInterpolatorConfig(NumericInterpolatorConfig.newBuilder()
-            .setFillPolicy(FillPolicy.NONE)
-            .setRealFillPolicy(FillWithRealPolicy.NONE)
-            .setType("interp")
-            .setDataType(NumericType.TYPE.toString())
+    source_config = (TimeSeriesDataSourceConfig) 
+        DefaultTimeSeriesDataSourceConfig.newBuilder()
+        .setMetric(MetricLiteralFilter.newBuilder()
+            .setMetric(METRIC_STRING)
             .build())
-        .build());
-    when(node.rollupAggregation()).thenReturn("avg");
+        .addSummaryAggregation("sum")
+        .addSummaryAggregation("count")
+        .setPrePadding("1h")
+        .setPostPadding("1h")
+        .setId("m1")
+        .build();
     
     Tsdb1xBigtableScanners scanners = new Tsdb1xBigtableScanners(node, source_config);
     assertEquals(State.CONTINUE, scanners.state());
@@ -354,36 +352,31 @@ public class TestTsdb1xBigtableScanners extends UTBase {
             .build())
         .setId("m1")
         .build();
-    when(node.downsampleConfig()).thenReturn(
-        (DownsampleConfig) DownsampleConfig.newBuilder()
-        .setId("ds")
-        .setInterval("1h")
-        .setAggregator("max")
-        .addInterpolatorConfig(NumericInterpolatorConfig.newBuilder()
-            .setFillPolicy(FillPolicy.NONE)
-            .setRealFillPolicy(FillWithRealPolicy.NONE)
-            .setType("interp")
-            .setDataType(NumericType.TYPE.toString())
+    source_config = (TimeSeriesDataSourceConfig) 
+        DefaultTimeSeriesDataSourceConfig.newBuilder()
+        .setMetric(MetricLiteralFilter.newBuilder()
+            .setMetric(METRIC_STRING)
             .build())
-        .build());
-    when(node.rollupAggregation()).thenReturn("max");
+        .addSummaryAggregation("max")
+        .setPrePadding("1h")
+        .setPostPadding("1h")
+        .setId("m1")
+        .build();
     scanners = new Tsdb1xBigtableScanners(node, source_config);
     start = scanners.setStartKey(METRIC_BYTES, null, null);
     assertArrayEquals(makeRowKey(METRIC_BYTES, END_TS - 900, null), start);
     
     // downsample 2 hours
-    when(node.downsampleConfig()).thenReturn(
-        (DownsampleConfig) DownsampleConfig.newBuilder()
-        .setId("ds")
-        .setInterval("2h")
-        .setAggregator("max")
-        .addInterpolatorConfig(NumericInterpolatorConfig.newBuilder()
-            .setFillPolicy(FillPolicy.NONE)
-            .setRealFillPolicy(FillWithRealPolicy.NONE)
-            .setType("interp")
-            .setDataType(NumericType.TYPE.toString())
+    source_config = (TimeSeriesDataSourceConfig) 
+        DefaultTimeSeriesDataSourceConfig.newBuilder()
+        .setMetric(MetricLiteralFilter.newBuilder()
+            .setMetric(METRIC_STRING)
             .build())
-        .build());
+        .addSummaryAggregation("max")
+        .setPrePadding("2h")
+        .setPostPadding("2h")
+        .setId("m1")
+        .build();
     scanners = new Tsdb1xBigtableScanners(node, source_config);
     start = scanners.setStartKey(METRIC_BYTES, null, null);
     assertArrayEquals(makeRowKey(METRIC_BYTES, START_TS - 900, null), start);
@@ -426,37 +419,33 @@ public class TestTsdb1xBigtableScanners extends UTBase {
     assertArrayEquals(makeRowKey(METRIC_BYTES, 1514851200, null), stop);
     
     // downsample
-    when(node.downsampleConfig()).thenReturn(
-        (DownsampleConfig) DownsampleConfig.newBuilder()
-        .setId("ds")
-        .setInterval("1h")
-        .setAggregator("avg")
-        .addInterpolatorConfig(NumericInterpolatorConfig.newBuilder()
-            .setFillPolicy(FillPolicy.NONE)
-            .setRealFillPolicy(FillWithRealPolicy.NONE)
-            .setType("interp")
-            .setDataType(NumericType.TYPE.toString())
+    source_config = (TimeSeriesDataSourceConfig) 
+        DefaultTimeSeriesDataSourceConfig.newBuilder()
+        .setMetric(MetricLiteralFilter.newBuilder()
+            .setMetric(METRIC_STRING)
             .build())
-        .build());
-    when(node.rollupAggregation()).thenReturn("avg");
+        .addSummaryAggregation("sum")
+        .addSummaryAggregation("count")
+        .setPrePadding("1h")
+        .setPostPadding("1h")
+        .setId("m1")
+        .build();
     scanners = new Tsdb1xBigtableScanners(node, source_config);
     stop = scanners.setStopKey(METRIC_BYTES, null);
     assertArrayEquals(makeRowKey(METRIC_BYTES, (END_TS - 900 + 7200), null), stop);
     
     // downsample 2 hours
-    when(node.downsampleConfig()).thenReturn(
-        (DownsampleConfig) DownsampleConfig.newBuilder()
-        .setId("ds")
-        .setInterval("2h")
-        .setAggregator("avg")
-        .addInterpolatorConfig(NumericInterpolatorConfig.newBuilder()
-            .setFillPolicy(FillPolicy.NONE)
-            .setRealFillPolicy(FillWithRealPolicy.NONE)
-            .setType("interp")
-            .setDataType(NumericType.TYPE.toString())
+    source_config = (TimeSeriesDataSourceConfig) 
+        DefaultTimeSeriesDataSourceConfig.newBuilder()
+        .setMetric(MetricLiteralFilter.newBuilder()
+            .setMetric(METRIC_STRING)
             .build())
-        .build());
-    when(node.rollupAggregation()).thenReturn("avg");
+        .addSummaryAggregation("sum")
+        .addSummaryAggregation("count")
+        .setPrePadding("2h")
+        .setPostPadding("2h")
+        .setId("m1")
+        .build();
     scanners = new Tsdb1xBigtableScanners(node, source_config);
     stop = scanners.setStopKey(METRIC_BYTES, null);
     assertArrayEquals(makeRowKey(METRIC_BYTES, (END_TS - 900 + 10800), null), stop);
@@ -877,9 +866,9 @@ public class TestTsdb1xBigtableScanners extends UTBase {
     assertEquals(4, interleave.getFiltersCount());
     assertArrayEquals("sum".getBytes(Const.ASCII_CHARSET), 
         interleave.getFilters(0).getColumnQualifierRegexFilter().toByteArray());
-    assertArrayEquals("count".getBytes(Const.ASCII_CHARSET), 
-        interleave.getFilters(1).getColumnQualifierRegexFilter().toByteArray());
     assertArrayEquals(new byte[] { 1 }, 
+        interleave.getFilters(1).getColumnQualifierRegexFilter().toByteArray());
+    assertArrayEquals("count".getBytes(Const.ASCII_CHARSET), 
         interleave.getFilters(2).getColumnQualifierRegexFilter().toByteArray());
     assertArrayEquals(new byte[] { 2 }, 
         interleave.getFilters(3).getColumnQualifierRegexFilter().toByteArray());
@@ -1004,9 +993,9 @@ public class TestTsdb1xBigtableScanners extends UTBase {
       assertEquals(4, interleave.getFiltersCount());
       assertArrayEquals("sum".getBytes(Const.ASCII_CHARSET), 
           interleave.getFilters(0).getColumnQualifierRegexFilter().toByteArray());
-      assertArrayEquals("count".getBytes(Const.ASCII_CHARSET), 
-          interleave.getFilters(1).getColumnQualifierRegexFilter().toByteArray());
       assertArrayEquals(new byte[] { 1 }, 
+          interleave.getFilters(1).getColumnQualifierRegexFilter().toByteArray());
+      assertArrayEquals("count".getBytes(Const.ASCII_CHARSET), 
           interleave.getFilters(2).getColumnQualifierRegexFilter().toByteArray());
       assertArrayEquals(new byte[] { 2 }, 
           interleave.getFilters(3).getColumnQualifierRegexFilter().toByteArray());
@@ -1203,10 +1192,13 @@ public class TestTsdb1xBigtableScanners extends UTBase {
             .build())
         .build();
     when(context.query()).thenReturn(query);
-    source_config = (TimeSeriesDataSourceConfig) DefaultTimeSeriesDataSourceConfig.newBuilder()
+    source_config = (TimeSeriesDataSourceConfig) 
+        DefaultTimeSeriesDataSourceConfig.newBuilder()
         .setMetric(MetricLiteralFilter.newBuilder()
             .setMetric(METRIC_STRING)
             .build())
+        .addSummaryAggregation("sum")
+        .addSummaryAggregation("count")
         .setFilterId("f1")
         .setId("m1")
         .build();
@@ -1250,11 +1242,15 @@ public class TestTsdb1xBigtableScanners extends UTBase {
     assertArrayEquals(Tsdb1xBigtableDataStore.DATA_FAMILY, 
         chain.getFilters(1).getFamilyNameRegexFilterBytes().toByteArray());
     Interleave interleave = chain.getFilters(2).getInterleave();
-    assertEquals(2, interleave.getFiltersCount());
+    assertEquals(4, interleave.getFiltersCount());
     assertArrayEquals("sum".getBytes(Const.ASCII_CHARSET), 
         interleave.getFilters(0).getColumnQualifierRegexFilter().toByteArray());
     assertArrayEquals(new byte[] { 1 }, 
         interleave.getFilters(1).getColumnQualifierRegexFilter().toByteArray());
+    assertArrayEquals("count".getBytes(Const.ASCII_CHARSET), 
+        interleave.getFilters(2).getColumnQualifierRegexFilter().toByteArray());
+    assertArrayEquals(new byte[] { 2 }, 
+        interleave.getFilters(3).getColumnQualifierRegexFilter().toByteArray());
     
     // raw
     request = storage.getScanners().get(1).request();
@@ -1872,6 +1868,8 @@ public class TestTsdb1xBigtableScanners extends UTBase {
         .build();
     
     Tsdb1xBigtableScanners scanners = new Tsdb1xBigtableScanners(node, source_config);
+    Tsdb1xBigtableQueryResult result = mock(Tsdb1xBigtableQueryResult.class);
+    scanners.current_result = result;
     scanners.initialize(null);
     
     assertNull(scanners.row_key_literals);
@@ -1879,15 +1877,13 @@ public class TestTsdb1xBigtableScanners extends UTBase {
     assertFalse(scanners.couldMultiGet());
     assertNull(scanners.scanners);
     assertFalse(scanners.initialized);
-    verify(node, times(1)).onError(any(NoSuchUniqueName.class));
-    verify(node, never()).onNext(any(QueryResult.class));
+    verify(node, never()).onError(any(NoSuchUniqueName.class));
+    verify(node, times(1)).onNext(result);
     verify(node, never()).onComplete(any(QueryNode.class), anyLong(), anyLong());
     
     trace = new MockTrace(true);
     scanners = new Tsdb1xBigtableScanners(node, source_config);
     scanners.initialize(trace.newSpan("UT").start());
-    verifySpan(Tsdb1xBigtableScanners.class.getName() + ".initialize", 
-        NoSuchUniqueName.class, 3);
   }
   
   @Test
@@ -1907,6 +1903,8 @@ public class TestTsdb1xBigtableScanners extends UTBase {
         .build();
     setConfig(filter, null, false);
     Tsdb1xBigtableScanners scanners = new Tsdb1xBigtableScanners(node, source_config);
+    Tsdb1xBigtableQueryResult result = mock(Tsdb1xBigtableQueryResult.class);
+    scanners.current_result = result;
     scanners.initialize(null);
     
     assertEquals(1, scanners.row_key_literals.size());
@@ -1914,12 +1912,13 @@ public class TestTsdb1xBigtableScanners extends UTBase {
     assertTrue(scanners.couldMultiGet());
     assertNull(scanners.scanners);
     assertFalse(scanners.initialized);
-    verify(node, times(1)).onError(any(NoSuchUniqueName.class));
-    verify(node, never()).onNext(any(QueryResult.class));
+    verify(node, never()).onError(any(NoSuchUniqueName.class));
+    verify(node, times(1)).onNext(any(QueryResult.class));
     verify(node, never()).onComplete(any(QueryNode.class), anyLong(), anyLong());
     
     // can't ignore with explicit tags
     scanners = new Tsdb1xBigtableScanners(node, source_config);
+    scanners.current_result = result;
     Whitebox.setInternalState(scanners, "skip_nsun_tagks", true);
     scanners.initialize(null);
     
@@ -1928,13 +1927,14 @@ public class TestTsdb1xBigtableScanners extends UTBase {
     assertTrue(scanners.couldMultiGet());
     assertNull(scanners.scanners);
     assertFalse(scanners.initialized);
-    verify(node, times(2)).onError(any(NoSuchUniqueName.class));
-    verify(node, never()).onNext(any(QueryResult.class));
+    verify(node, never()).onError(any(NoSuchUniqueName.class));
+    verify(node, times(2)).onNext(result);
     verify(node, never()).onComplete(any(QueryNode.class), anyLong(), anyLong());
     
     // tracing
     trace = new MockTrace(true);
     scanners = new Tsdb1xBigtableScanners(node, source_config);
+    scanners.current_result = result;
     scanners.initialize(trace.newSpan("UT").start());
     verifySpan(Tsdb1xBigtableScanners.class.getName() + ".initialize", 
         NoSuchUniqueName.class, 10);
@@ -1960,8 +1960,8 @@ public class TestTsdb1xBigtableScanners extends UTBase {
     assertTrue(scanners.couldMultiGet());
     assertEquals(1, scanners.scanners.size());
     assertTrue(scanners.initialized);
-    verify(node, times(3)).onError(any(NoSuchUniqueName.class));
-    verify(node, never()).onNext(any(QueryResult.class));
+    verify(node, never()).onError(any(NoSuchUniqueName.class));
+    verify(node, times(3)).onNext(result);
     verify(node, never()).onComplete(any(QueryNode.class), anyLong(), anyLong());
   }
   
@@ -1980,6 +1980,8 @@ public class TestTsdb1xBigtableScanners extends UTBase {
         .build();
     setConfig(filter, null, false);
     Tsdb1xBigtableScanners scanners = new Tsdb1xBigtableScanners(node, source_config);
+    Tsdb1xBigtableQueryResult result = mock(Tsdb1xBigtableQueryResult.class);
+    scanners.current_result = result;
     scanners.initialize(null);
     
     assertEquals(0, scanners.row_key_literals.size());
@@ -1987,8 +1989,8 @@ public class TestTsdb1xBigtableScanners extends UTBase {
     assertTrue(scanners.couldMultiGet());
     assertNull(scanners.scanners);
     assertFalse(scanners.initialized);
-    verify(node, times(1)).onError(any(NoSuchUniqueName.class));
-    verify(node, never()).onNext(any(QueryResult.class));
+    verify(node, never()).onError(any(NoSuchUniqueName.class));
+    verify(node, times(1)).onNext(result);
     verify(node, never()).onComplete(any(QueryNode.class), anyLong(), anyLong());
     
     // tracing
@@ -2169,30 +2171,34 @@ public class TestTsdb1xBigtableScanners extends UTBase {
   public void scanNext() throws Exception {
     Tsdb1xBigtableScanners scanners = new Tsdb1xBigtableScanners(node, source_config);
     Tsdb1xBigtableScanner scanner = mock(Tsdb1xBigtableScanner.class);
+    Tsdb1xBigtableQueryResult result = mock(Tsdb1xBigtableQueryResult.class);
+    scanners.current_result = result;
     when(scanner.state()).thenReturn(State.CONTINUE);
     scanners.scanners = Lists.<Tsdb1xBigtableScanner[]>newArrayList(
         new Tsdb1xBigtableScanner[] { scanner }
         );
     
     scanners.scanNext(null);
-    verify(scanner, times(1)).fetchNext(null, null);
+    verify(scanner, times(1)).fetchNext(result, null);
     verify(node, never()).onError(any(Throwable.class));
     verify(node, never()).onNext(any(QueryResult.class));
     verify(node, never()).onComplete(any(QueryNode.class), anyLong(), anyLong());
     
-    doThrow(new UnitTestException()).when(scanner).fetchNext(null, null);
+    doThrow(new UnitTestException()).when(scanner).fetchNext(result, null);
     try {
       scanners.scanNext(null);
       fail("Expected UnitTestException");
     } catch (UnitTestException e) { }
-    verify(node, times(1)).onError(any(UnitTestException.class));
-    verify(node, never()).onNext(any(QueryResult.class));
+    verify(node, never()).onError(any(UnitTestException.class));
+    verify(node, times(1)).onNext(result);
     verify(node, never()).onComplete(any(QueryNode.class), anyLong(), anyLong());
   }
   
   @Test
   public void scanNextSalted() throws Exception {
     Tsdb1xBigtableScanners scanners = new Tsdb1xBigtableScanners(node, source_config);
+    Tsdb1xBigtableQueryResult result = mock(Tsdb1xBigtableQueryResult.class);
+    scanners.current_result = result;
     Tsdb1xBigtableScanner scanner1 = mock(Tsdb1xBigtableScanner.class);
     when(scanner1.state()).thenReturn(State.CONTINUE);
     Tsdb1xBigtableScanner scanner2 = mock(Tsdb1xBigtableScanner.class);
@@ -2202,19 +2208,19 @@ public class TestTsdb1xBigtableScanners extends UTBase {
         );
     
     scanners.scanNext(null);
-    verify(scanner1, times(1)).fetchNext(null, null);
-    verify(scanner2, times(1)).fetchNext(null, null);
+    verify(scanner1, times(1)).fetchNext(result, null);
+    verify(scanner2, times(1)).fetchNext(result, null);
     verify(node, never()).onError(any(Throwable.class));
     verify(node, never()).onNext(any(QueryResult.class));
     verify(node, never()).onComplete(any(QueryNode.class), anyLong(), anyLong());
     
-    doThrow(new UnitTestException()).when(scanner2).fetchNext(null, null);
+    doThrow(new UnitTestException()).when(scanner2).fetchNext(result, null);
     try {
       scanners.scanNext(null);
       fail("Expected UnitTestException");
     } catch (UnitTestException e) { }
-    verify(node, times(1)).onError(any(UnitTestException.class));
-    verify(node, never()).onNext(any(QueryResult.class));
+    verify(node, never()).onError(any(UnitTestException.class));
+    verify(node, times(1)).onNext(any(QueryResult.class));
     verify(node, never()).onComplete(any(QueryNode.class), anyLong(), anyLong());
   }
   
@@ -2251,16 +2257,20 @@ public class TestTsdb1xBigtableScanners extends UTBase {
   @Test
   public void exception() throws Exception {
     Tsdb1xBigtableScanners scanners = new Tsdb1xBigtableScanners(node, source_config);
+    Tsdb1xBigtableQueryResult result = mock(Tsdb1xBigtableQueryResult.class);
+    scanners.current_result = result;
     assertFalse(scanners.hasException());
     
     scanners.exception(new UnitTestException());
     assertTrue(scanners.hasException());
-    verify(node, times(1)).onError(any(UnitTestException.class));
+    verify(node, never()).onError(any(UnitTestException.class));
+    verify(node, times(1)).onNext(result);
     
     // nother scanner threw a failure
     scanners.exception(new UnitTestException());
     assertTrue(scanners.hasException());
-    verify(node, times(1)).onError(any(UnitTestException.class));
+    verify(node, never()).onError(any(UnitTestException.class));
+    verify(node, times(1)).onNext(result);
   }
   
   @Test
@@ -2383,6 +2393,7 @@ public class TestTsdb1xBigtableScanners extends UTBase {
     }
     query = query_builder.build();
     when(context.query()).thenReturn(query);
+    
     DefaultTimeSeriesDataSourceConfig.Builder builder = 
         (DefaultTimeSeriesDataSourceConfig.Builder) DefaultTimeSeriesDataSourceConfig.newBuilder()
         .setMetric(MetricLiteralFilter.newBuilder()
@@ -2392,6 +2403,16 @@ public class TestTsdb1xBigtableScanners extends UTBase {
         .setId("m1");
     if (pre_agg) {
       builder.addOverride(Tsdb1xBigtableDataStore.PRE_AGG_KEY, "true");
+    }
+    if (ds != null) {
+      if (ds.equals("avg")) {
+        builder.addSummaryAggregation("sum")
+               .addSummaryAggregation("count");
+      } else {
+        builder.addSummaryAggregation(ds);
+      }
+      builder.setPrePadding("1h")
+             .setPostPadding("1h");
     }
     
     source_config = builder.build();
@@ -2410,20 +2431,6 @@ public class TestTsdb1xBigtableScanners extends UTBase {
             .setPreAggregationTable("tsdb-agg-30m")
             .setRowSpan("1d")
             .build()));
-      
-      when(node.downsampleConfig()).thenReturn(
-          (DownsampleConfig) DownsampleConfig.newBuilder()
-          .setId("ds")
-          .setInterval("1h")
-          .setAggregator(ds)
-          .addInterpolatorConfig(NumericInterpolatorConfig.newBuilder()
-              .setFillPolicy(FillPolicy.NONE)
-              .setRealFillPolicy(FillWithRealPolicy.NONE)
-              .setType("interp")
-              .setDataType(NumericType.TYPE.toString())
-              .build())
-          .build());
-      when(node.rollupAggregation()).thenReturn(ds);
     }
     return filter;
   }

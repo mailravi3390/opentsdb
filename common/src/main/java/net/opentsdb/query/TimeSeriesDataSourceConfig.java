@@ -36,6 +36,9 @@ public interface TimeSeriesDataSourceConfig extends QueryNodeConfig {
    * all. */
   public List<String> getTypes();
   
+  /** @return An optional namespace for such systems as support it. */
+  public String getNamespace();
+  
   /** @return The non-null metric filter. */
   public MetricFilter getMetric();
   
@@ -51,19 +54,32 @@ public interface TimeSeriesDataSourceConfig extends QueryNodeConfig {
   /** @return An optional list of push down nodes. May be null. */
   public List<QueryNodeConfig> getPushDownNodes();
   
-  /** @return A non-null clone of the current config as a builder
-   * that can be modified. */
-  public Builder getBuilder();
+  /** @return An optional summary interval from an upstream downsampler. */
+  public String getSummaryInterval();
+  
+  /** @return An optional list of summary aggregations from an upstream downsampler. */
+  public List<String> getSummaryAggregations();
+  
+  /** @return An optional list of rollup intervals as durations. */
+  public List<String> getRollupIntervals();
+  
+  /** @return An optional pre-query start time padding string as a duration. */
+  public String getPrePadding();
+  
+  /** @return An optional post-query end time padding string as a duration. */
+  public String getPostPadding();
   
   /**
    * A base builder interface for data source configs.
    */
-  public static interface Builder {
+  public static interface Builder extends QueryNodeConfig.Builder {
     public Builder setSourceId(final String source_id);
     
     public Builder setTypes(final List<String> types);
     
     public Builder addType(final String type);
+    
+    public Builder setNamespace(final String namespace);
     
     public Builder setMetric(final MetricFilter metric);
     
@@ -77,6 +93,24 @@ public interface TimeSeriesDataSourceConfig extends QueryNodeConfig {
         final List<QueryNodeConfig> push_down_nodes);
     
     public Builder addPushDownNode(final QueryNodeConfig node);
+
+    public Builder setSummaryInterval(final String summary_interval);
+    
+    public Builder setSummaryAggregations(final List<String> summary_aggregations);
+    
+    public Builder addSummaryAggregation(final String summary_aggregation);
+    
+    public Builder setRollupIntervals(final List<String> rollup_intervals);
+    
+    public Builder addRollupInterval(final String rollup_interval);
+    
+    public Builder setPrePadding(final String pre_padding);
+    
+    public Builder setPostPadding(final String post_padding);
+    
+    public String id();
+    
+    public String sourceId();
     
     public TimeSeriesDataSourceConfig build();
     

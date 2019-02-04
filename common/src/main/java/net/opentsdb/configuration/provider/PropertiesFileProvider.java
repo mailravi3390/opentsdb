@@ -33,8 +33,10 @@ import com.google.common.base.Strings;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
+import com.google.common.io.Files;
 
 import io.netty.util.HashedWheelTimer;
+import net.opentsdb.common.Const;
 import net.opentsdb.configuration.Configuration;
 import net.opentsdb.configuration.ConfigurationException;
 import net.opentsdb.configuration.ConfigurationOverride;
@@ -58,7 +60,7 @@ import net.opentsdb.configuration.ConfigurationOverride;
  * 
  * @since 3.0
  */
-public class PropertiesFileProvider extends Provider {
+public class PropertiesFileProvider extends BaseProvider {
   private static final Logger LOG = LoggerFactory.getLogger(PropertiesFileProvider.class);
   
   /** The file name. */
@@ -67,45 +69,48 @@ public class PropertiesFileProvider extends Provider {
   /** The cache of entries last loaded. */
   private final Map<String, String> cache;
   
+  /** A hash to compare against. */
+  private long last_hash;
+  
   /**
    * Default ctor that attempts to load the old configs from TSDB 2x.
    * @param factory A non-null provider factory.
    * @param config A non-null config object we belong to.
    * @param timer A non-null timer object.
-   * @param reload_keys A non-null (possibly empty) set of keys to reload.
    * @throws IllegalArgumentException if a required parameter is missing.
    */
   public PropertiesFileProvider(final ProviderFactory factory, 
                         final Configuration config, 
-                        final HashedWheelTimer timer,
-                        final Set<String> reload_keys) {
-    this(factory, config, timer, reload_keys, null);
+                        final HashedWheelTimer timer) {
+    this(factory, config, timer, null);
   }
   
   /**
    * Ctor used by the factory to load a specific file. If a user provided
    * file name is given, the file will attempt reloads at each interval.
+   * @param factory A non-null provider factory.
+   * @param config A non-null config object we belong to.
+   * @param timer A non-null timer object.
    * @param file_name A file name. If null or empty it will look for defaults.
    * @throws ConfigurationException if the default file name couldn't be found.
    */
   public PropertiesFileProvider(final ProviderFactory factory, 
-                        final Configuration config, 
-                        final HashedWheelTimer timer,
-                        final Set<String> reload_keys,
-                        final String file_name) {
-    super(factory, config, timer, reload_keys);
+                                final Configuration config, 
+                                final HashedWheelTimer timer,
+                                final String file_name) {
+    super(factory, config, timer);
     if (Strings.isNullOrEmpty(file_name)) {
       this.file_name = findDefault();
       if (Strings.isNullOrEmpty(this.file_name)) {
         throw new ConfigurationException("No default file name was found.");
       }
     } else {
-      int idx = file_name.toLowerCase().indexOf("file://");
+      int idx = file_name.toLowerCase().indexOf(FileFactory.PROTOCOL);
       if (idx < 0) {
         throw new IllegalArgumentException("File name did not start "
-            + "with `file://`: " + file_name);
+            + "with `"  + FileFactory.PROTOCOL + "`: " + file_name);
       }
-      this.file_name = file_name.substring(7);
+      this.file_name = file_name.substring(FileFactory.PROTOCOL.length());
     }
     
     cache = Maps.newConcurrentMap();
@@ -141,6 +146,26 @@ public class PropertiesFileProvider extends Provider {
 
   @Override
   public void reload() {
+    final File file = new File(file_name);
+    if (!file.exists()) {
+      LOG.warn("No file found at: " + file_name);
+      return;
+    }
+    
+    try {
+      long hash = Files.asByteSource(file).hash(Const.HASH_FUNCTION()).asLong();
+      if (hash == last_hash) {
+        if (LOG.isDebugEnabled()) {
+          LOG.debug("No changes to file: " + file_name);
+        }
+        return;
+      }
+      last_hash = hash;
+    } catch (IOException e) {
+      LOG.error("Failed to read the file at: " + file_name, e);
+      return;
+    }
+    
     try (final FileInputStream file_stream = new FileInputStream(file_name)) {
       final Properties properties = new Properties();
       properties.load(file_stream);
@@ -153,8 +178,7 @@ public class PropertiesFileProvider extends Provider {
           cache.put((String) entry.getKey(), (String) entry.getValue());
           new_keys.add((String) entry.getKey());
           
-          if (reload_keys != null && 
-              reload_keys.contains((String) entry.getKey())) {
+          if (config.reloadableKeys().contains((String) entry.getKey())) {
             try {
               config.addOverride((String) entry.getKey(),
                   ConfigurationOverride.newBuilder()
@@ -172,6 +196,16 @@ public class PropertiesFileProvider extends Provider {
       for (final String key : cache.keySet()) {
         if (!new_keys.contains(key)) {
           cache.remove(key);
+          try {
+            config.addOverride(key,
+                ConfigurationOverride.newBuilder()
+                  .setSource(file_name)
+                  .setValue(null)
+                  .build());
+          } catch (Exception e) {
+            LOG.warn("Failed to store key [" + key + "] from file: " 
+                + file_name, e);
+          }
         }
       }
       

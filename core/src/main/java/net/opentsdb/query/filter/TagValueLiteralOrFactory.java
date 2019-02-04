@@ -39,7 +39,7 @@ public class TagValueLiteralOrFactory extends BaseTSDBPlugin
   }
 
   public QueryFilter parse(final TSDB tsdb, 
-                           final ObjectMapper mapper, 
+                           final ObjectMapper mapper,
                            final JsonNode node) {
     if (node == null) {
       throw new IllegalArgumentException("Node cannot be null.");

@@ -20,6 +20,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
@@ -30,6 +31,7 @@ import org.slf4j.LoggerFactory;
 import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Strings;
 import com.google.common.collect.Lists;
@@ -41,11 +43,13 @@ import net.opentsdb.configuration.ConfigurationValueValidator.ValidationResult;
 import net.opentsdb.configuration.provider.CommandLineProvider;
 import net.opentsdb.configuration.provider.CommandLineProvider.CommandLine;
 import net.opentsdb.configuration.provider.EnvironmentProvider;
+import net.opentsdb.configuration.provider.MapProvider;
 import net.opentsdb.configuration.provider.ProtocolProviderFactory;
 import net.opentsdb.configuration.provider.Provider;
 import net.opentsdb.configuration.provider.ProviderFactory;
 import net.opentsdb.configuration.provider.RuntimeOverrideProvider;
 import net.opentsdb.configuration.provider.RuntimeOverrideProvider.RuntimeOverride;
+import net.opentsdb.configuration.provider.SecretProvider;
 import net.opentsdb.configuration.provider.SystemPropertiesProvider;
 import net.opentsdb.utils.ArgP;
 import net.opentsdb.utils.PluginLoader;
@@ -68,7 +72,7 @@ import net.opentsdb.utils.Threads;
  * <p>
  * For example 'PropertiesFile,Environment,SystemProperties,CommandLine,RuntimeOverride'
  * means load the old style OpenTSDB default files via the 
- * {@link PropertiesFileFactory} factory, then parse the environment
+ * {@link FileFactory} factory, then parse the environment
  * variables and override any duplicates from the properties, then parse
  * the system properties and command line in that order. The final
  * {@link RuntimeOverrideProvider} allows the application to insert
@@ -117,7 +121,8 @@ public class Configuration implements Closeable {
    * Jackson de/serializer initialized, configured and shared in order
    * to use the converter for handling type conversion.
    */
-  protected static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+  public static final ObjectMapper OBJECT_MAPPER = 
+      new ObjectMapper(new YAMLFactory());
   static {
     // allows parsing NAN and such without throwing an exception. This is
     // important
@@ -151,6 +156,9 @@ public class Configuration implements Closeable {
    */
   protected final List<Provider> providers;
   
+  /** A list of secret providers. */
+  protected final Map<String, SecretProvider> secret_providers;
+  
   /** The parsed provider config string. */
   protected String provider_config;
   
@@ -175,7 +183,43 @@ public class Configuration implements Closeable {
    * loaded.
    */
   public Configuration() {
-    this(new String[0]);
+    this(new String[0], null);
+  }
+  
+  /**
+   * An optional ctor that bootstraps from a properties object.
+   * 
+   * @param properties A non-null properties object. May be empty.
+   * @throws IllegalArgumentException if some required parameter was invalid.
+   * @throws ConfigurationException if the configuration could not be 
+   * loaded.
+   */
+  public Configuration(final Properties properties) {
+    this(new String[0], new MapProvider(properties));
+  }
+  
+  /**
+   * An optional ctor that bootstraps from a map object.
+   * 
+   * @param properties A non-null properties object. May be empty.
+   * @throws IllegalArgumentException if some required parameter was invalid.
+   * @throws ConfigurationException if the configuration could not be 
+   * loaded.
+   */
+  public Configuration(final Map<String, String> properties) {
+    this(new String[0], new MapProvider(properties));
+  }
+  
+  /**
+   * An optional ctor that bootstraps from CLI arguments.
+   * 
+   * @param cli_args A non-null list of CLI arguments..
+   * @throws IllegalArgumentException if some required parameter was invalid.
+   * @throws ConfigurationException if the configuration could not be 
+   * loaded.
+   */
+  public Configuration(final String[] cli_args) {
+    this(cli_args, null);
   }
   
   /**
@@ -188,7 +232,8 @@ public class Configuration implements Closeable {
    * @throws ConfigurationException if the configuration could not be 
    * loaded.
    */
-  public Configuration(final String[] cli_args) {
+  public Configuration(final String[] cli_args, 
+                       final MapProvider map_provider) {
     if (cli_args == null) {
       throw new IllegalArgumentException("CLI arguments cannot be null.");
     }
@@ -239,9 +284,10 @@ public class Configuration implements Closeable {
     timer = new HashedWheelTimer();
     
     providers = Lists.newArrayList();
-    loadInitialConfig(cli_args);
+    secret_providers = Maps.newHashMap();
+    loadInitialConfig(cli_args, map_provider);
     loadPlugins();
-    loadProviders(cli_args);
+    loadProviders(cli_args, map_provider);
     configureReloads();
   }
 
@@ -283,12 +329,12 @@ public class Configuration implements Closeable {
           + "key: " + schema.key);
     }
     
+    if (schema.isDynamic()) {
+      reload_keys.add(schema.getKey());
+    }
+    
     // pull from previous sources in order
     for (int i = providers.size() - 1; i >= 0; i--) {
-      if (schema.isDynamic()) {
-        reload_keys.add(schema.getKey());
-      }
-      
       final ConfigurationOverride setting = providers.get(i)
           .getSetting(schema.key);
       if (setting != null) {
@@ -826,6 +872,105 @@ public class Configuration implements Closeable {
   }
   
   /**
+   * Calls the appropriate {@link SecretProvider} to fetch the value.
+   * Keys can be in the format "key" or "provider_id:key". If the secret
+   * is a binary value, it's converted to a UTF-8 string.
+   * 
+   * @param key A non-null and non-empty key to fetch.
+   * @return The key if found, an exception if not.
+   */
+  public String getSecretString(final String key) {
+    if (Strings.isNullOrEmpty(key)) {
+      throw new IllegalArgumentException("Key cannot be null or empty.");
+    }
+    if (key.contains(":")) {
+      final String type = key.substring(0, key.indexOf(":")).trim();
+      if (Strings.isNullOrEmpty(type)) {
+        throw new IllegalArgumentException("Empty plugin ID preceding ");
+      }
+      final SecretProvider provider = secret_providers.get(type);
+      if (provider == null) {
+        throw new ConfigurationException("No secret provider found for: " 
+            + type);
+      }
+      return provider.getSecretString(key.substring(key.indexOf(":") + 1));
+    } else {
+      final SecretProvider provider = secret_providers.get(null);
+      if (provider == null) {
+        throw new ConfigurationException("No default secret provider "
+            + "configured.");
+      }
+      return provider.getSecretString(key);
+    }
+  }
+  
+  /**
+   * Calls the appropriate {@link SecretProvider} to fetch the value.
+   * Keys can be in the format "key" or "provider_id:key". If the secret
+   * is a string value, it's converted to a UTF-8 encoded byte array.
+   * 
+   * @param key A non-null and non-empty key to fetch.
+   * @return The key if found, an exception if not.
+   */
+  public byte[] getSecretBytes(final String key) {
+    if (Strings.isNullOrEmpty(key)) {
+      throw new IllegalArgumentException("Key cannot be null or empty.");
+    }
+    if (key.contains(":")) {
+      final String type = key.substring(0, key.indexOf(":")).trim();
+      if (Strings.isNullOrEmpty(type)) {
+        throw new IllegalArgumentException("Empty plugin ID preceding ");
+      }
+      final SecretProvider provider = secret_providers.get(type);
+      if (provider == null) {
+        throw new ConfigurationException("No secret provider found for: " 
+            + type);
+      }
+      return provider.getSecretBytes(key.substring(key.indexOf(":") + 1));
+    } else {
+      final SecretProvider provider = secret_providers.get(null);
+      if (provider == null) {
+        throw new ConfigurationException("No default secret provider "
+            + "configured.");
+      }
+      return provider.getSecretBytes(key);
+    }
+  }
+  
+  /**
+   * Calls the appropriate {@link SecretProvider} to fetch the value.
+   * Keys can be in the format "key" or "provider_id:key". The raw secret
+   * object is returned based on the type.
+   * 
+   * @param key A non-null and non-empty key to fetch.
+   * @return The key if found, an exception if not.
+   */
+  public Object getSecretObject(final String key) {
+    if (Strings.isNullOrEmpty(key)) {
+      throw new IllegalArgumentException("Key cannot be null or empty.");
+    }
+    if (key.contains(":")) {
+      final String type = key.substring(0, key.indexOf(":")).trim();
+      if (Strings.isNullOrEmpty(type)) {
+        throw new IllegalArgumentException("Empty plugin ID preceding ");
+      }
+      final SecretProvider provider = secret_providers.get(type);
+      if (provider == null) {
+        throw new ConfigurationException("No secret provider found for: " 
+            + type);
+      }
+      return provider.getSecretObject(key.substring(key.indexOf(":") + 1));
+    } else {
+      final SecretProvider provider = secret_providers.get(null);
+      if (provider == null) {
+        throw new ConfigurationException("No default secret provider "
+            + "configured.");
+      }
+      return provider.getSecretObject(key);
+    }
+  }
+  
+  /**
    * Returns a read-only view of the current state of the config. Creates
    * a snapshot with duplicate values so if the config is really large
    * use this with care.
@@ -878,6 +1023,11 @@ public class Configuration implements Closeable {
     LOG.info("Completed shutdown of config providers, factories and timer.");
   }
   
+  /** @return The unmodifiable list of keys to notify on. */
+  public Set<String> reloadableKeys() {
+    return Collections.unmodifiableSet(reload_keys);
+  }
+  
   /**
    * Helper method that attempts to load the initial providers key and
    * plugin path from the:
@@ -886,12 +1036,14 @@ public class Configuration implements Closeable {
    * <li>Command line arguments</li></ol>
    * 
    * @param cli_args A non-null array of zero or more command line arguments.
+   * @param map_provider An optional map of configs passed programatically.
    * @throws IllegalArgumentException if the args were null or if a value
    * read for one of the initial properties faild validation.
    * @throws ConfigurationException if the default providers list failed
    * to match the regular expression check.
    */
-  private void loadInitialConfig(final String[] cli_args) {
+  private void loadInitialConfig(final String[] cli_args, 
+                                 final MapProvider map_provider) {
     if (cli_args == null) {
       throw new IllegalArgumentException("CLI Args cannot be null.");
     }
@@ -972,7 +1124,7 @@ public class Configuration implements Closeable {
           .build());
     }
     
-    // Finally we'll parse out the command line args. 
+    // ...then we'll parse out the command line args. 
     final ArgP argp = new ArgP(false);
     argp.addOption("--" + CONFIG_PROVIDERS_KEY, "The comma separated list "
         + "of config sources in order from defaults to overrides.");
@@ -1021,6 +1173,21 @@ public class Configuration implements Closeable {
             .setSource(CommandLineProvider.SOURCE)
             .setValue(plugin_path)
             .build());
+      }
+    }
+    
+    // finally, if we have a map provider, do it!
+    if (map_provider != null) {
+      ConfigurationOverride override = map_provider.getSetting(CONFIG_PROVIDERS_KEY);
+      if (override != null) {
+        provider_config = (String) override.getValue();
+        addOverride(CONFIG_PROVIDERS_KEY, override);
+      }
+      
+      override = map_provider.getSetting(PLUGIN_DIRECTORY_KEY);
+      if (override != null) {
+        plugin_path = (String) override.getValue();
+        addOverride(PLUGIN_DIRECTORY_KEY, override);
       }
     }
   }
@@ -1073,8 +1240,10 @@ public class Configuration implements Closeable {
    * 
    * @param cli_args A non-null list of cli arguments to pass to the 
    * command line provider if requested.
+   * @param map_provider An optional map provider.
    */
-  private void loadProviders(final String[] cli_args) {
+  private void loadProviders(final String[] cli_args, 
+                             final MapProvider map_provider) {
     final String[] raw_sources = StringUtils.splitString(provider_config, ',');
     if (raw_sources.length < 1) {
       throw new IllegalArgumentException("No sources found!");
@@ -1092,6 +1261,10 @@ public class Configuration implements Closeable {
         de_dupes.add(raw.trim());
         sources.add(raw.trim());
       }
+    }
+    
+    if (map_provider != null) {
+      providers.add(map_provider);
     }
     
     // init in reverse order so remote sources can pull settings from 
@@ -1112,17 +1285,27 @@ public class Configuration implements Closeable {
           if (factory instanceof ProtocolProviderFactory) {
             if (((ProtocolProviderFactory) factory).handlesProtocol(source)) {
               final Provider provider = ((ProtocolProviderFactory) factory)
-                  .newInstance(this, timer, reload_keys, source);
+                  .newInstance(this, timer, source);
               if (provider == null) {
                 throw new ConfigurationException("Factory [" 
                     + factory + "] returned a null instance.");
               }
-              providers.add(provider);
-              if (LOG.isDebugEnabled()) {
-                LOG.debug("Instantiated the [" 
-                    + provider.getClass().getSimpleName() 
-                    + "] provider with source: " + source);
+              if (provider instanceof SecretProvider) {
+                secret_providers.put(provider.source(), (SecretProvider) provider);
+                if (LOG.isDebugEnabled()) {
+                  LOG.debug("Instantiated the [" 
+                      + provider.getClass().getSimpleName() 
+                      + "] secret provider with ID: " + source);
+                }
+              } else {
+                providers.add(provider);
+                if (LOG.isDebugEnabled()) {
+                  LOG.debug("Instantiated the [" 
+                      + provider.getClass().getSimpleName() 
+                      + "] provider with source: " + source);
+                }
               }
+              
               matched = true;
               break;
             }
@@ -1140,7 +1323,6 @@ public class Configuration implements Closeable {
           providers.add(new CommandLineProvider(new CommandLine(), 
                                                 this, 
                                                 timer, 
-                                                reload_keys, 
                                                 cli_args));
           if (LOG.isDebugEnabled()) {
             LOG.debug("Instantiated the [CommandLine] provider.");
@@ -1151,15 +1333,14 @@ public class Configuration implements Closeable {
           // properly. Here we force instantiation.
           providers.add(new RuntimeOverrideProvider(new CommandLine(), 
                                                     this, 
-                                                    timer, 
-                                                    reload_keys));
+                                                    timer));
           if (LOG.isDebugEnabled()) {
             LOG.debug("Instantiated the [CommandLine] provider.");
           }
         } else if (source.equals("UnitTest")) {
           // another outlier for unit tests.
           providers.add(new UnitTestConfiguration.UnitTest()
-              .newInstance(this, timer, reload_keys));
+              .newInstance(this, timer));
           if (LOG.isDebugEnabled()) {
             LOG.debug("Instantiated the [UnitTest] provider.");
           }
@@ -1170,15 +1351,26 @@ public class Configuration implements Closeable {
             if (factory.simpleName().equals(source) || 
                 factory.getClass().getCanonicalName().equals(source)) {
               final Provider plugin = factory
-                  .newInstance(this, timer, reload_keys);
+                  .newInstance(this, timer);
               if (plugin == null) {
                 throw new ConfigurationException("Factory [" 
                     + factory + "] returned a null instance.");
               }
-              providers.add(plugin);
-              if (LOG.isDebugEnabled()) {
-                LOG.debug("Instantiated the [" 
-                    + plugin.getClass().getSimpleName() + "] provider.");
+              
+              if (plugin instanceof SecretProvider) {
+                secret_providers.put(plugin.source(), (SecretProvider) plugin);
+                if (LOG.isDebugEnabled()) {
+                  LOG.debug("Instantiated the [" 
+                      + plugin.getClass().getSimpleName() 
+                      + "] secret provider with ID: " + source);
+                }
+              } else {
+                providers.add(plugin);
+                if (LOG.isDebugEnabled()) {
+                  LOG.debug("Instantiated the [" 
+                      + plugin.getClass().getSimpleName() 
+                      + "] provider with source: " + source);
+                }
               }
               matched = true;
               break;
@@ -1244,26 +1436,16 @@ public class Configuration implements Closeable {
   }
   
   @VisibleForTesting
-  List<Provider> sources() {
-    return providers;
-  }
-
-  @VisibleForTesting
   HashedWheelTimer timer() {
     return timer;
   }
 
   @VisibleForTesting
-  Set<String> reloadKeys() {
-    return this.reloadKeys();
-  }
-  
-  @VisibleForTesting
   List<ProviderFactory> factories() {
     return factories;
   }
 
-  @VisibleForTesting
+  /** @return Package private list of providers. */
   List<Provider> providers() {
     return providers;
   }

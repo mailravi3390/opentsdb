@@ -14,6 +14,7 @@
 // limitations under the License.
 package net.opentsdb.servlet.resources;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.util.Enumeration;
 import java.util.HashMap;
@@ -24,7 +25,6 @@ import javax.servlet.AsyncEvent;
 import javax.servlet.AsyncListener;
 import javax.servlet.ServletConfig;
 import javax.servlet.http.HttpServletRequest;
-import javax.servlet.http.HttpServletResponse;
 import javax.ws.rs.Consumes;
 import javax.ws.rs.POST;
 import javax.ws.rs.Path;
@@ -59,7 +59,7 @@ import net.opentsdb.stats.Trace;
 import net.opentsdb.stats.Tracer;
 import net.opentsdb.utils.JSON;
 
-@Path("api/query/exp")
+@Path("query/exp")
 public class ExpressionRpc {
   private static final Logger LOG = LoggerFactory.getLogger(QueryRpc.class);
   
@@ -85,9 +85,17 @@ public class ExpressionRpc {
   @POST
   @Produces(MediaType.APPLICATION_JSON)
   @Consumes(MediaType.APPLICATION_JSON)
-  public void post(final @Context ServletConfig servlet_config, 
-                       final @Context HttpServletRequest request,
-                       final @Context HttpServletResponse response) throws Exception {
+  public Response post(final @Context ServletConfig servlet_config, 
+                       final @Context HttpServletRequest request/*,
+                       final @Context HttpServletResponse response*/) throws Exception {
+    final Object stream = request.getAttribute("DATA");
+    if (stream != null) {
+      return Response.ok()
+          .entity(((ByteArrayOutputStream) stream).toByteArray())
+          .header("Content-Type", "application/json")
+          .build();
+    }
+    
     Object obj = servlet_config.getServletContext()
         .getAttribute(OpenTSDBApplication.TSD_ATTRIBUTE);
     if (obj == null) {
@@ -193,12 +201,14 @@ public class ExpressionRpc {
                   .finish();
     }
     
-    Span setup_span = null;
+    final Span setup_span;
     if (query_span != null) {
       setup_span = trace.newSpanWithThread("setupContext")
           .withTag("startThread", Thread.currentThread().getName())
           .asChildOf(query_span)
           .start();
+    } else {
+      setup_span = null;
     }
     
     // start the Async context and pass it around. 
@@ -207,8 +217,6 @@ public class ExpressionRpc {
     final AsyncContext async = request.startAsync();
     async.setTimeout((Integer) servlet_config.getServletContext()
         .getAttribute(OpenTSDBApplication.ASYNC_TIMEOUT_ATTRIBUTE));
-    
-    response.setHeader("Content-Type", "application/json");
     
     TimeSeriesQuery q = query.build();
     SerdesOptions serdes = q.getSerdesConfigs().isEmpty() ? null :
@@ -226,10 +234,11 @@ public class ExpressionRpc {
             .setTrace(trace)
             .setQuerySpan(query_span)
             .build())
+        .setAuthState(auth_state)
         .addSink(ServletSinkConfig.newBuilder()
             .setId(ServletSinkFactory.TYPE)
             .setSerdesOptions(serdes)
-            .setResponse(response)
+            .setRequest(request)
             .setAsync(async)
             .build())
         .build();
@@ -249,9 +258,17 @@ public class ExpressionRpc {
         } catch (Exception e) {
           LOG.error("Failed to close the query: ", e);
         }
+        
         GenericExceptionMapper.serialize(
             new QueryExecutionException("The query has exceeded "
-            + "the timeout limit.", 504), event.getSuppliedResponse());
+            + "the timeout limit.", 504), event.getAsyncContext().getResponse());
+        event.getAsyncContext().complete();
+        
+        try {
+          context.close();
+        } catch (Throwable t) {
+          LOG.error("Failed to close the query context", t);
+        }
       }
 
       @Override
@@ -267,42 +284,47 @@ public class ExpressionRpc {
     }
 
     async.addListener(new AsyncTimeout());
-    
-    if (setup_span != null) {
-      setup_span.setTag("Status", "OK")
-                .setTag("finalThread", Thread.currentThread().getName())
-                .finish();
-    }
-    
-    Span execute_span = null;
-    if (query_span != null) {
-      execute_span = trace.newSpanWithThread("startExecution")
-          .withTag("startThread", Thread.currentThread().getName())
-          .asChildOf(query_span)
-          .start();
-    }
-    
-    try {
-      context.initialize(query_span).join();
-      context.fetchNext(query_span);
-    } catch (Throwable t) {
-      LOG.error("Unexpected exception triggering query.", t);
-      if (execute_span != null) {
-        execute_span.setErrorTags(t)
+    async.start(new Runnable() {
+      public void run() {
+        if (setup_span != null) {
+          setup_span.setTag("Status", "OK")
+                    .setTag("finalThread", Thread.currentThread().getName())
                     .finish();
+        }
+        
+        Span execute_span = null;
+        if (query_span != null) {
+          execute_span = trace.newSpanWithThread("startExecution")
+              .withTag("startThread", Thread.currentThread().getName())
+              .asChildOf(query_span)
+              .start();
+        }
+        
+        try {
+          context.initialize(query_span).join();
+          context.fetchNext(query_span);
+        } catch (Throwable t) {
+          LOG.error("Unexpected exception triggering query.", t);
+          if (execute_span != null) {
+            execute_span.setErrorTags(t)
+                        .finish();
+          }
+          //GenericExceptionMapper.serialize(t, response);
+          async.complete();
+          if (query_span != null) {
+            query_span.setErrorTags(t)
+                       .finish();
+          }
+          throw new QueryExecutionException("Unexpected expection", 500, t);
+        }
+        
+        if (execute_span != null) {
+          execute_span.setSuccessTags()
+                      .finish();
+        }
       }
-      GenericExceptionMapper.serialize(t, response);
-      async.complete();
-      if (query_span != null) {
-        query_span.setErrorTags(t)
-                   .finish();
-      }
-    }
-    
-    if (execute_span != null) {
-      execute_span.setSuccessTags()
-                  .finish();
-    }
+    });
+    return null;
   }
   
 }

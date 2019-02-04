@@ -14,6 +14,7 @@
 // limitations under the License.
 package net.opentsdb.configuration;
 
+import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
@@ -23,7 +24,7 @@ import static org.junit.Assert.fail;
 import java.io.IOException;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
+import java.util.Properties;
 
 import org.junit.Test;
 
@@ -34,10 +35,13 @@ import com.google.common.collect.Maps;
 import io.netty.util.HashedWheelTimer;
 import net.opentsdb.configuration.ConfigurationEntrySchema;
 import net.opentsdb.configuration.ConfigurationOverride;
+import net.opentsdb.common.Const;
 import net.opentsdb.configuration.Configuration;
 import net.opentsdb.configuration.ConfigurationException;
 import net.opentsdb.configuration.ConfigurationValueValidator.ValidationResult;
+import net.opentsdb.configuration.provider.BaseProvider;
 import net.opentsdb.configuration.provider.CommandLineProvider;
+import net.opentsdb.configuration.provider.MapProvider;
 import net.opentsdb.configuration.provider.ProtocolProviderFactory;
 import net.opentsdb.configuration.provider.Provider;
 import net.opentsdb.configuration.provider.ProviderFactory;
@@ -46,7 +50,7 @@ import net.opentsdb.configuration.provider.SystemPropertiesProvider;
 
 public class TestConfiguration {
   
-  private static final int BUILT_IN_FACTORIES = 9;
+  private static final int BUILT_IN_FACTORIES = 11;
   private static final int BUILT_IN_SCHEMAS = 3;
   
   final String[] cli_args = new String[] {
@@ -69,6 +73,7 @@ public class TestConfiguration {
       assertTrue(config.providers.get(0) instanceof RuntimeOverrideProvider);
       assertTrue(config.providers.get(1) instanceof CommandLineProvider);
       assertTrue(config.providers.get(2) instanceof SystemPropertiesProvider);
+      System.out.println("****** factories: " + config.factories);
       assertEquals(BUILT_IN_FACTORIES, config.factories.size());
     }
   }
@@ -96,8 +101,58 @@ public class TestConfiguration {
   }
 
   @Test
+  public void ctorPropertiesObject() throws Exception {
+    Properties properties = new Properties();
+    properties.put(Configuration.CONFIG_PROVIDERS_KEY, "RuntimeOverride");
+    properties.put("my.key", "Lallybrach");
+    
+    try (final Configuration config = new Configuration(properties)) {
+      assertEquals("RuntimeOverride", 
+          config.provider_config);
+      assertNull(config.plugin_path);
+      assertEquals(BUILT_IN_SCHEMAS, config.merged_config.size());
+      assertEquals("RuntimeOverride", 
+          config.merged_config.get(Configuration.CONFIG_PROVIDERS_KEY).getValue());
+      assertNull(config.merged_config.get(Configuration.PLUGIN_DIRECTORY_KEY)
+          .getValue());
+      assertEquals(2, config.providers.size());
+      assertTrue(config.providers.get(0) instanceof MapProvider);
+      assertTrue(config.providers.get(1) instanceof RuntimeOverrideProvider);
+      assertEquals(BUILT_IN_FACTORIES, config.factories.size());
+      
+      config.register("my.key", null, false, "UT");
+      assertEquals("Lallybrach", config.getString("my.key"));
+    }
+  }
+  
+  @Test
+  public void ctorPropertiesMap() throws Exception {
+    Map<String, String> properties = Maps.newHashMap();
+    properties.put(Configuration.CONFIG_PROVIDERS_KEY, "RuntimeOverride");
+    properties.put("my.key", "Lallybrach");
+    
+    try (final Configuration config = new Configuration(properties)) {
+      assertEquals("RuntimeOverride", 
+          config.provider_config);
+      assertNull(config.plugin_path);
+      assertEquals(BUILT_IN_SCHEMAS, config.merged_config.size());
+      assertEquals("RuntimeOverride", 
+          config.merged_config.get(Configuration.CONFIG_PROVIDERS_KEY).getValue());
+      assertNull(config.merged_config.get(Configuration.PLUGIN_DIRECTORY_KEY)
+          .getValue());
+      assertEquals(2, config.providers.size());
+      assertTrue(config.providers.get(0) instanceof MapProvider);
+      assertTrue(config.providers.get(1) instanceof RuntimeOverrideProvider);
+      assertEquals(BUILT_IN_FACTORIES, config.factories.size());
+      
+      config.register("my.key", null, false, "UT");
+      assertEquals("Lallybrach", config.getString("my.key"));
+    }
+  }
+  
+  @Test
   public void ctorNullArgs() throws Exception {
-    try (final Configuration config = new Configuration(null)) {
+    try (final Configuration config = new Configuration((String[]) null)) {
       fail("Expected IllegalArgumentException");
     } catch (IllegalArgumentException e) { }
   }
@@ -126,6 +181,7 @@ public class TestConfiguration {
       assertEquals(2, config.providers.size());
       assertTrue(config.providers.get(0) instanceof CommandLineProvider);
       assertTrue(config.providers.get(1) instanceof SystemPropertiesProvider);
+      System.out.println("****** factories: " + config.factories);
       assertEquals(BUILT_IN_FACTORIES, config.factories.size());
     }
   }
@@ -197,6 +253,41 @@ public class TestConfiguration {
       assertTrue(config.providers.get(0) instanceof CommandLineProvider);
       assertTrue(config.providers.get(1) instanceof DummyHttpProvider);
       assertEquals(BUILT_IN_FACTORIES, config.factories.size());
+    }
+  }
+  
+  @Test
+  public void ctorSecret() throws Exception {
+    String[] cli_args = new String[] {
+        "--" + Configuration.CONFIG_PROVIDERS_KEY 
+          + "=secrets://net.opentsdb.configuration.provider.PlainTextSecretProvider,CommandLine"
+    };
+    
+    try (final Configuration config = new Configuration(cli_args)) {
+      config.register("my.secret", "hidden_secret", false, "UT");
+      assertEquals("hidden_secret", config.getSecretString("my.secret"));
+      assertArrayEquals("hidden_secret".getBytes(Const.UTF8_CHARSET), 
+          config.getSecretBytes("my.secret"));
+    }
+    
+    cli_args = new String[] {
+        "--" + Configuration.CONFIG_PROVIDERS_KEY 
+          + "=secrets://net.opentsdb.configuration.provider.PlainTextSecretProvider:MyID,CommandLine"
+    };
+    
+    try (final Configuration config = new Configuration(cli_args)) {
+      config.register("my.secret", "hidden_secret", false, "UT");
+      assertEquals("hidden_secret", config.getSecretString("MyID:my.secret"));
+      assertArrayEquals("hidden_secret".getBytes(Const.UTF8_CHARSET), 
+          config.getSecretBytes("MyID:my.secret"));
+      try {
+        config.getSecretString("my.secret");
+        fail("Expected ConfigurationException");
+      } catch (ConfigurationException e) { }
+      try {
+        config.getSecretBytes("my.secret");
+        fail("Expected ConfigurationException");
+      } catch (ConfigurationException e) { }
     }
   }
   
@@ -1171,12 +1262,12 @@ public class TestConfiguration {
     assertTrue(found_factory);
   }
   
-  public static class DummyHttpProvider extends Provider {
+  public static class DummyHttpProvider extends BaseProvider {
     boolean closed = false;
     
     public DummyHttpProvider(ProviderFactory factory, Configuration config,
-        HashedWheelTimer timer, Set<String> reload_keys) {
-      super(factory, config, timer, reload_keys);
+        HashedWheelTimer timer) {
+      super(factory, config, timer);
       // TODO Auto-generated constructor stub
     }
 
@@ -1223,15 +1314,14 @@ public class TestConfiguration {
     }
 
     @Override
-    public Provider newInstance(Configuration config, HashedWheelTimer timer,
-        Set<String> reload_keys) {
-      return new DummyHttpProvider(this, config, timer, reload_keys);
+    public Provider newInstance(Configuration config, HashedWheelTimer timer) {
+      return new DummyHttpProvider(this, config, timer);
     }
 
     @Override
     public Provider newInstance(Configuration config, HashedWheelTimer timer,
-        Set<String> reload_keys, String uri) {
-      return new DummyHttpProvider(this, config, timer, reload_keys);
+        String uri) {
+      return new DummyHttpProvider(this, config, timer);
     }
 
     @Override
@@ -1247,8 +1337,7 @@ public class TestConfiguration {
     public void close() throws IOException { }
 
     @Override
-    public Provider newInstance(Configuration config, HashedWheelTimer timer,
-        Set<String> reload_keys) {
+    public Provider newInstance(Configuration config, HashedWheelTimer timer) {
       // this will cause an error
       return null;
     }
@@ -1272,8 +1361,7 @@ public class TestConfiguration {
     public void close() throws IOException { }
 
     @Override
-    public Provider newInstance(Configuration config, HashedWheelTimer timer,
-        Set<String> reload_keys) {
+    public Provider newInstance(Configuration config, HashedWheelTimer timer) {
       // this will cause an error
       throw new RuntimeException("OOPSS! Couldn't instantiate me!");
     }

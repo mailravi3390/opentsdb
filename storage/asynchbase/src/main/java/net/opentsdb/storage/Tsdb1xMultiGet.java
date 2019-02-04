@@ -33,6 +33,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.base.Strings;
 import com.google.common.collect.Lists;
 import com.stumbleupon.async.Callback;
 import com.stumbleupon.async.Deferred;
@@ -44,7 +45,6 @@ import net.opentsdb.data.TimeStamp;
 import net.opentsdb.data.TimeStamp.Op;
 import net.opentsdb.query.QueryNode;
 import net.opentsdb.query.QueryResult;
-import net.opentsdb.query.SemanticQuery;
 import net.opentsdb.query.TimeSeriesDataSourceConfig;
 import net.opentsdb.query.processor.rate.Rate;
 import net.opentsdb.rollup.RollupInterval;
@@ -129,6 +129,9 @@ public class Tsdb1xMultiGet implements HBaseExecutor {
   /** The current timestamp for the lowest resolution data we're querying. */
   protected volatile TimeStamp timestamp;
   
+  /** The final timestamp with optional padding. */
+  protected volatile TimeStamp end_timestamp;
+  
   /** The current fallback timestamp for the next highest resolution data
    * we're querying when falling back. May be null. */
   protected volatile TimeStamp fallback_timestamp;
@@ -155,6 +158,9 @@ public class Tsdb1xMultiGet implements HBaseExecutor {
   
   /** The state of this executor. */
   protected volatile State state;
+  
+  /** Tracking time. */
+  protected long fetch_start;
   
   /**
    * Default ctor that parses the query, sets up rollups and sorts (and
@@ -247,35 +253,23 @@ public class Tsdb1xMultiGet implements HBaseExecutor {
         node.rollupUsage() != RollupUsage.ROLLUP_RAW) {
       rollups_enabled = true;
       rollup_index = 0;
-      if (node.rollupAggregation() != null && 
-          node.rollupAggregation().equals("avg")) {
-        // old and new schemas with literal agg names or prefixes.
-        final List<ScanFilter> filters = Lists.newArrayListWithCapacity(4);
+      
+      final List<ScanFilter> filters = Lists.newArrayListWithCapacity(
+          source_config.getSummaryAggregations().size());
+      for (final String agg : source_config.getSummaryAggregations()) {
         filters.add(new QualifierFilter(CompareFilter.CompareOp.EQUAL,
-            new BinaryPrefixComparator("sum".getBytes(Const.ASCII_CHARSET))));
-        filters.add(new QualifierFilter(CompareFilter.CompareOp.EQUAL,
-            new BinaryPrefixComparator("count".getBytes(Const.ASCII_CHARSET))));
-        filters.add(new QualifierFilter(CompareFilter.CompareOp.EQUAL,
-            new BinaryPrefixComparator(new byte[] { 
-                (byte) node.schema().rollupConfig().getIdForAggregator("sum")
-            })));
+            new BinaryPrefixComparator(
+                agg.toLowerCase().getBytes(Const.ASCII_CHARSET))));
         filters.add(new QualifierFilter(CompareFilter.CompareOp.EQUAL,
             new BinaryPrefixComparator(new byte[] { 
-                (byte) node.schema().rollupConfig().getIdForAggregator("count")
+                (byte) node.schema().rollupConfig().getIdForAggregator(
+                    agg.toLowerCase())
             })));
-        filter = new FilterList(filters, Operator.MUST_PASS_ONE);
-      } else {
-        // it's another aggregation
-        final List<ScanFilter> filters = Lists.newArrayListWithCapacity(2);
-        filters.add(new QualifierFilter(CompareFilter.CompareOp.EQUAL,
-            new BinaryPrefixComparator(node.rollupAggregation()
-                .getBytes(Const.ASCII_CHARSET))));
-        filters.add(new QualifierFilter(CompareFilter.CompareOp.EQUAL,
-            new BinaryPrefixComparator(new byte[] { 
-                (byte) node.schema().rollupConfig()
-                .getIdForAggregator(node.rollupAggregation())
-            })));
-        filter = new FilterList(filters, Operator.MUST_PASS_ONE);
+      }
+      filter = new FilterList(filters, Operator.MUST_PASS_ONE);
+      if (node.pipelineContext().query().isTraceEnabled()) {
+        node.pipelineContext().queryContext().logTrace(node, 
+            "Enabling rollup queries with filter: " + filter);
       }
     } else {
       rollup_index = -1;
@@ -286,6 +280,11 @@ public class Tsdb1xMultiGet implements HBaseExecutor {
     // sentinel
     tsuid_idx = -1;
     timestamp = getInitialTimestamp(rollup_index);
+    end_timestamp = reversed ? node.pipelineContext().query().startTime().getCopy() :
+        node.pipelineContext().query().endTime().getCopy();
+    if (!Strings.isNullOrEmpty(source_config.getPostPadding())) {
+      end_timestamp.add(DateTime.parseDuration2(source_config.getPostPadding()));
+    }
     
     if (rollups_enabled) {
       tables = Lists.newArrayListWithCapacity(node.rollupIntervals().size() + 1);
@@ -306,6 +305,9 @@ public class Tsdb1xMultiGet implements HBaseExecutor {
   @Override
   public synchronized void fetchNext(final Tsdb1xQueryResult result, 
                                      final Span span) {
+    if (fetch_start == 0) {
+      fetch_start = DateTime.nanoTime();
+    }
     if (result == null) {
       throw new IllegalArgumentException("Result cannot be null.");
     }
@@ -316,6 +318,11 @@ public class Tsdb1xMultiGet implements HBaseExecutor {
     if (span != null && span.isDebug()) {
       child = span.newChild(getClass().getName() + ".fetchNext")
                   .start();
+    }
+    
+    if (node.pipelineContext().query().isTraceEnabled()) {
+      node.pipelineContext().queryContext().logTrace(node, "Executing multiget query with " 
+          + tsuids.size() + " TSUIDs and a concurrency of " + concurrency_multi_get);
     }
     
     while (outstanding < concurrency_multi_get && !advance() && !has_failed) {
@@ -366,8 +373,8 @@ public class Tsdb1xMultiGet implements HBaseExecutor {
       }
     }
     if (ts != null && (reversed ? 
-        ts.compare(Op.LT, ((SemanticQuery) node.pipelineContext().query()).startTime()) : 
-        ts.compare(Op.GT, ((SemanticQuery) node.pipelineContext().query()).endTime()))) {
+        ts.compare(Op.LT, end_timestamp) : 
+        ts.compare(Op.GT, end_timestamp))) {
       // DONE with query!
       return true;
     }
@@ -389,8 +396,8 @@ public class Tsdb1xMultiGet implements HBaseExecutor {
         }
       }
       if (reversed ? 
-          ts.compare(Op.LT, ((SemanticQuery) node.pipelineContext().query()).startTime()) : 
-          ts.compare(Op.GT, ((SemanticQuery) node.pipelineContext().query()).endTime())) {
+          ts.compare(Op.LT, end_timestamp) : 
+          ts.compare(Op.GT, end_timestamp)) {
         // DONE with query!
         return true;
       }
@@ -415,8 +422,14 @@ public class Tsdb1xMultiGet implements HBaseExecutor {
         child.setErrorTags(t)
              .finish();
       }
+      node.pipelineContext().queryContext().logError(node, 
+          "Multiget query failed with exception: " + t.getMessage());
       state = State.EXCEPTION;
-      node.onError(t);
+      current_result.setException(t);
+      final QueryResult result = current_result;
+      current_result = null;
+      outstanding = 0;
+      node.onNext(result);
     } else {
       if (LOG.isDebugEnabled()) {
         LOG.debug("Exception from followup get", t);
@@ -472,6 +485,10 @@ public class Tsdb1xMultiGet implements HBaseExecutor {
           current_result.timeSeries().isEmpty()) && 
           rollups_enabled && node.rollupUsage() != RollupUsage.ROLLUP_NOFALLBACK) {
         // we can fallback!
+        if (node.pipelineContext().query().isDebugEnabled()) {
+          node.pipelineContext().queryContext().logDebug(node, 
+              "Falling back to next highest resolution.");
+        }
         tsuid_idx = 0;
         fallback_timestamp = null;
         if (node.rollupUsage() == RollupUsage.ROLLUP_FALLBACK_RAW) {
@@ -489,6 +506,11 @@ public class Tsdb1xMultiGet implements HBaseExecutor {
         current_result = null;
         if (child != null) {
           child.setSuccessTags().finish();
+        }
+        if (node.pipelineContext().query().isTraceEnabled()) {
+          node.pipelineContext().queryContext().logTrace(node, 
+              "Finished multi-get query in: " 
+                  + DateTime.msFromNanoDiff(DateTime.nanoTime(), fetch_start));
         }
         state = State.COMPLETE;
         node.onNext(result);
@@ -729,9 +751,8 @@ public class Tsdb1xMultiGet implements HBaseExecutor {
     } else {
       long ts = reversed ? node.pipelineContext().query().endTime().epoch() : 
         node.pipelineContext().query().startTime().epoch();
-      if (node.downsampleConfig() != null) {
-        final long interval = DateTime.parseDuration(
-            node.downsampleConfig().getInterval());
+      if (!(Strings.isNullOrEmpty(source_config.getPrePadding()))) {
+        final long interval = DateTime.parseDuration(source_config.getPrePadding());
         if (interval > 0) {
           final long interval_offset = (1000L * ts) % interval;
           ts -= interval_offset / 1000L;

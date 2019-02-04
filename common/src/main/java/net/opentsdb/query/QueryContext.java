@@ -19,6 +19,7 @@ import java.util.List;
 
 import com.stumbleupon.async.Deferred;
 
+import net.opentsdb.auth.AuthState;
 import net.opentsdb.core.TSDB;
 import net.opentsdb.stats.QueryStats;
 import net.opentsdb.stats.Span;
@@ -77,6 +78,9 @@ public interface QueryContext {
   /** @return The TSDB to which we belong. */
   public TSDB tsdb();
   
+  /** @return The optional auth state. May be null if auth is not enabled. */
+  public AuthState authState();
+  
   /**
    * Called after building the context but before calling 
    * {@link #fetchNext(Span)} so filters and such can be initialized.
@@ -84,4 +88,76 @@ public interface QueryContext {
    * exception if something went wrong.
    */
   public Deferred<Void> initialize(final Span span);
+  
+  /**
+   * An optional list of entries from the execution to help users understand
+   * what's happening under the hood.
+   * @return A non-null, possibly empty, list of log entries.
+   */
+  public List<String> logs();
+  
+  /**
+   * Adds an error level log entry.
+   * @param log A non-null and non-empty log line.
+   */
+  public void logError(final String log);
+  
+  /**
+   * Adds an error level log entry.
+   * @param node An optional node.
+   * @param log A non-null and non-empty log line.
+   */
+  public void logError(final QueryNode node, final String log);
+ 
+  /**
+   * Adds a warn level log entry.
+   * @param log A non-null and non-empty log line.
+   */
+  public void logWarn(final String log);
+  
+  /**
+   * Adds a warn level log entry.
+   * @param node An optional node.
+   * @param log A non-null and non-empty log line.
+   */
+  public void logWarn(final QueryNode node, final String log);
+  
+  /**
+   * Adds an info level log entry.
+   * @param log A non-null and non-empty log line.
+   */
+  public void logInfo(final String log);
+  
+  /**
+   * Adds an info level log entry.
+   * @param node An optional node.
+   * @param log A non-null and non-empty log line.
+   */
+  public void logInfo(final QueryNode node, final String log);
+  
+  /**
+   * Adds a debug level log entry.
+   * @param log A non-null and non-empty log line.
+   */
+  public void logDebug(final String log);
+  
+  /**
+   * Adds a debug level log entry.
+   * @param node An optional node.
+   * @param log A non-null and non-empty log line.
+   */
+  public void logDebug(final QueryNode node, final String log);
+  
+  /**
+   * Adds a trace level log entry.
+   * @param log A non-null and non-empty log line.
+   */
+  public void logTrace(final String log);
+  
+  /**
+   * Adds a trace level log entry.
+   * @param node An optional node.
+   * @param log A non-null and non-empty log line.
+   */
+  public void logTrace(final QueryNode node, final String log);
 }

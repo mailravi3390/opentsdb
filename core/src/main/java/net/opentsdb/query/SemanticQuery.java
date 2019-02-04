@@ -69,21 +69,60 @@ public class SemanticQuery implements TimeSeriesQuery {
   /** The serialization options. */
   private List<SerdesOptions> serdes_options;
   
+  /** The log level for this query. */
+  private LogLevel log_level;
+  
   SemanticQuery(final Builder builder) {
-    if (Strings.isNullOrEmpty(builder.start)) {
+    if (Strings.isNullOrEmpty(builder.start) && Strings.isNullOrEmpty(builder.end)) {
       throw new IllegalArgumentException("Start time is required.");
     }
-    start = builder.start;
-    start_ts = new MillisecondTimeStamp(
-        DateTime.parseDateTimeString(start, builder.time_zone));
+
+    if (Strings.isNullOrEmpty(builder.start)) {
+      start = null;
+    } else {
+      start = builder.start;
+    }
+
     if (Strings.isNullOrEmpty(builder.end)) {
       end = null;
-      end_ts = new MillisecondTimeStamp(DateTime.currentTimeMillis());
     } else {
       end = builder.end;
-      end_ts = new MillisecondTimeStamp(
-          DateTime.parseDateTimeString(end, builder.time_zone));
     }
+
+    // we have end time, but no start time
+    if (Strings.isNullOrEmpty(builder.start) && !Strings.isNullOrEmpty(builder.end)) { 
+
+      // is end time before or after current time?
+      if (DateTime.parseDateTimeString(end, builder.time_zone) > DateTime.currentTimeMillis()) {
+        end_ts = new MillisecondTimeStamp(DateTime.parseDateTimeString(end, builder.time_zone));
+        start_ts = new MillisecondTimeStamp(DateTime.currentTimeMillis());
+      } else {
+        start_ts = new MillisecondTimeStamp(DateTime.parseDateTimeString(end, builder.time_zone));
+        end_ts = new MillisecondTimeStamp(DateTime.currentTimeMillis());
+      }
+
+    // we have start time, but no end time
+    } else if (!Strings.isNullOrEmpty(builder.start) && Strings.isNullOrEmpty(builder.end)) {
+
+      // is start time before or after current time?
+      if (DateTime.parseDateTimeString(start, builder.time_zone) > DateTime.currentTimeMillis()) {
+        end_ts = new MillisecondTimeStamp(DateTime.parseDateTimeString(start, builder.time_zone));
+        start_ts = new MillisecondTimeStamp(DateTime.currentTimeMillis());
+      } else {
+        start_ts = new MillisecondTimeStamp(DateTime.parseDateTimeString(start, builder.time_zone));
+        end_ts = new MillisecondTimeStamp(DateTime.currentTimeMillis());
+      }
+
+    } else if (DateTime.parseDateTimeString(start, builder.time_zone) > 
+      DateTime.parseDateTimeString(end, builder.time_zone)) { // start after end
+        start_ts = new MillisecondTimeStamp(DateTime.parseDateTimeString(end, builder.time_zone));
+        end_ts = new MillisecondTimeStamp(DateTime.parseDateTimeString(start, builder.time_zone));
+
+    } else { // regular input
+      start_ts = new MillisecondTimeStamp(DateTime.parseDateTimeString(start, builder.time_zone));
+      end_ts = new MillisecondTimeStamp(DateTime.parseDateTimeString(end, builder.time_zone));
+    }
+
     time_zone = builder.time_zone;
     
     // TODO need checks here
@@ -106,6 +145,7 @@ public class SemanticQuery implements TimeSeriesQuery {
     mode = builder.mode;
     serdes_options = builder.serdes_config == null ? 
         Collections.emptyList() : builder.serdes_config;
+    log_level = builder.log_level;
   }
 
   @Override
@@ -179,6 +219,26 @@ public class SemanticQuery implements TimeSeriesQuery {
         .hash();
   }
 
+  @Override
+  public LogLevel getLogLevel() {
+    return log_level;
+  }
+  
+  @Override
+  public boolean isTraceEnabled() {
+    return log_level.ordinal() >= LogLevel.TRACE.ordinal();
+  }
+  
+  @Override
+  public boolean isDebugEnabled() {
+    return log_level.ordinal() >= LogLevel.DEBUG.ordinal();
+  }
+  
+  @Override
+  public boolean isWarnEnabled() {
+    return log_level.ordinal() >= LogLevel.WARN.ordinal();
+  }
+  
   public static Builder newBuilder() {
     return new Builder();
   }
@@ -191,6 +251,7 @@ public class SemanticQuery implements TimeSeriesQuery {
     private List<NamedFilter> filters;
     private QueryMode mode;
     private List<SerdesOptions> serdes_config;
+    private LogLevel log_level = LogLevel.ERROR;
     
     public Builder setStart(final String start) {
       this.start = start;
@@ -248,6 +309,11 @@ public class SemanticQuery implements TimeSeriesQuery {
         this.serdes_config = Lists.newArrayList();
       }
       this.serdes_config.add(serdes_config);
+      return this;
+    }
+    
+    public Builder setLogLevel(final LogLevel log_level) {
+      this.log_level = log_level;
       return this;
     }
     
@@ -371,6 +437,11 @@ public class SemanticQuery implements TimeSeriesQuery {
       }
     } else {
       builder.setMode(QueryMode.SINGLE);
+    }
+    
+    node = root.get("logLevel");
+    if (node != null && !node.isNull()) {
+      builder.setLogLevel(LogLevel.valueOf(node.asText().toUpperCase()));
     }
     
     node = root.get("serdesConfigs");

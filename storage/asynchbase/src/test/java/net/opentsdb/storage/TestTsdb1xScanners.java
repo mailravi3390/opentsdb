@@ -64,7 +64,6 @@ import net.opentsdb.core.Registry;
 import net.opentsdb.configuration.Configuration;
 import net.opentsdb.configuration.UnitTestConfiguration;
 import net.opentsdb.core.TSDB;
-import net.opentsdb.data.types.numeric.NumericType;
 import net.opentsdb.query.DefaultTimeSeriesDataSourceConfig;
 import net.opentsdb.query.QueryMode;
 import net.opentsdb.query.QueryNode;
@@ -72,7 +71,6 @@ import net.opentsdb.query.QueryPipelineContext;
 import net.opentsdb.query.QueryResult;
 import net.opentsdb.query.TimeSeriesDataSourceConfig;
 import net.opentsdb.query.SemanticQuery;
-import net.opentsdb.query.QueryFillPolicy.FillWithRealPolicy;
 import net.opentsdb.query.filter.ChainFilter;
 import net.opentsdb.query.filter.DefaultNamedFilter;
 import net.opentsdb.query.filter.ExplicitTagsFilter;
@@ -82,9 +80,6 @@ import net.opentsdb.query.filter.QueryFilter;
 import net.opentsdb.query.filter.TagValueLiteralOrFilter;
 import net.opentsdb.query.filter.TagValueRegexFilter;
 import net.opentsdb.query.filter.TagValueWildcardFilter;
-import net.opentsdb.query.interpolation.types.numeric.NumericInterpolatorConfig;
-import net.opentsdb.query.pojo.FillPolicy;
-import net.opentsdb.query.processor.downsample.DownsampleConfig;
 import net.opentsdb.rollup.DefaultRollupConfig;
 import net.opentsdb.rollup.RollupInterval;
 import net.opentsdb.rollup.RollupUtils.RollupUsage;
@@ -132,7 +127,8 @@ public class TestTsdb1xScanners extends UTBase {
         .setExecutionGraph(Collections.emptyList())
         .build();
     
-    source_config = (TimeSeriesDataSourceConfig) DefaultTimeSeriesDataSourceConfig.newBuilder()
+    source_config = (TimeSeriesDataSourceConfig) 
+        DefaultTimeSeriesDataSourceConfig.newBuilder()
         .setMetric(MetricLiteralFilter.newBuilder()
             .setMetric(METRIC_STRING)
             .build())
@@ -251,19 +247,17 @@ public class TestTsdb1xScanners extends UTBase {
           .setRowSpan("1d")
           .build()));
     
-    when(node.downsampleConfig()).thenReturn(
-        (DownsampleConfig) DownsampleConfig.newBuilder()
-        .setId("ds")
-        .setInterval("1h")
-        .setAggregator("avg")
-        .addInterpolatorConfig(NumericInterpolatorConfig.newBuilder()
-            .setFillPolicy(FillPolicy.NONE)
-            .setRealFillPolicy(FillWithRealPolicy.NONE)
-            .setType("interp")
-            .setDataType(NumericType.TYPE.toString())
+    source_config = (TimeSeriesDataSourceConfig) 
+        DefaultTimeSeriesDataSourceConfig.newBuilder()
+        .setMetric(MetricLiteralFilter.newBuilder()
+            .setMetric(METRIC_STRING)
             .build())
-        .build());
-    when(node.rollupAggregation()).thenReturn("avg");
+        .addSummaryAggregation("sum")
+        .addSummaryAggregation("count")
+        .setPrePadding("1h")
+        .setPostPadding("1h")
+        .setId("m1")
+        .build();
     
     Tsdb1xScanners scanners = new Tsdb1xScanners(node, source_config);
     assertEquals(State.CONTINUE, scanners.state());
@@ -339,42 +333,31 @@ public class TestTsdb1xScanners extends UTBase {
         .setExecutionGraph(Collections.emptyList())
         .build();
     when(context.query()).thenReturn(query);
-    source_config = (TimeSeriesDataSourceConfig) DefaultTimeSeriesDataSourceConfig.newBuilder()
+    source_config = (TimeSeriesDataSourceConfig) 
+        DefaultTimeSeriesDataSourceConfig.newBuilder()
         .setMetric(MetricLiteralFilter.newBuilder()
             .setMetric(METRIC_STRING)
             .build())
+        .addSummaryAggregation("max")
+        .setPrePadding("1h")
+        .setPostPadding("1h")
         .setId("m1")
         .build();
-    when(node.downsampleConfig()).thenReturn(
-        (DownsampleConfig) DownsampleConfig.newBuilder()
-        .setId("ds")
-        .setInterval("1h")
-        .setAggregator("max")
-        .addInterpolatorConfig(NumericInterpolatorConfig.newBuilder()
-            .setFillPolicy(FillPolicy.NONE)
-            .setRealFillPolicy(FillWithRealPolicy.NONE)
-            .setType("interp")
-            .setDataType(NumericType.TYPE.toString())
-            .build())
-        .build());
-    when(node.rollupAggregation()).thenReturn("max");
     scanners = new Tsdb1xScanners(node, source_config);
     start = scanners.setStartKey(METRIC_BYTES, null, null);
     assertArrayEquals(makeRowKey(METRIC_BYTES, END_TS - 900, null), start);
     
     // downsample 2 hours
-    when(node.downsampleConfig()).thenReturn(
-        (DownsampleConfig) DownsampleConfig.newBuilder()
-        .setId("ds")
-        .setInterval("2h")
-        .setAggregator("max")
-        .addInterpolatorConfig(NumericInterpolatorConfig.newBuilder()
-            .setFillPolicy(FillPolicy.NONE)
-            .setRealFillPolicy(FillWithRealPolicy.NONE)
-            .setType("interp")
-            .setDataType(NumericType.TYPE.toString())
+    source_config = (TimeSeriesDataSourceConfig) 
+        DefaultTimeSeriesDataSourceConfig.newBuilder()
+        .setMetric(MetricLiteralFilter.newBuilder()
+            .setMetric(METRIC_STRING)
             .build())
-        .build());
+        .addSummaryAggregation("max")
+        .setPrePadding("2h")
+        .setPostPadding("2h")
+        .setId("m1")
+        .build();
     scanners = new Tsdb1xScanners(node, source_config);
     start = scanners.setStartKey(METRIC_BYTES, null, null);
     assertArrayEquals(makeRowKey(METRIC_BYTES, START_TS - 900, null), start);
@@ -417,37 +400,33 @@ public class TestTsdb1xScanners extends UTBase {
     assertArrayEquals(makeRowKey(METRIC_BYTES, 1514851200, null), stop);
     
     // downsample
-    when(node.downsampleConfig()).thenReturn(
-        (DownsampleConfig) DownsampleConfig.newBuilder()
-        .setId("ds")
-        .setInterval("1h")
-        .setAggregator("avg")
-        .addInterpolatorConfig(NumericInterpolatorConfig.newBuilder()
-            .setFillPolicy(FillPolicy.NONE)
-            .setRealFillPolicy(FillWithRealPolicy.NONE)
-            .setType("interp")
-            .setDataType(NumericType.TYPE.toString())
+    source_config = (TimeSeriesDataSourceConfig) 
+        DefaultTimeSeriesDataSourceConfig.newBuilder()
+        .setMetric(MetricLiteralFilter.newBuilder()
+            .setMetric(METRIC_STRING)
             .build())
-        .build());
-    when(node.rollupAggregation()).thenReturn("avg");
+        .addSummaryAggregation("sum")
+        .addSummaryAggregation("count")
+        .setPrePadding("1h")
+        .setPostPadding("1h")
+        .setId("m1")
+        .build();
     scanners = new Tsdb1xScanners(node, source_config);
     stop = scanners.setStopKey(METRIC_BYTES, null);
     assertArrayEquals(makeRowKey(METRIC_BYTES, (END_TS - 900 + 7200), null), stop);
     
     // downsample 2 hours
-    when(node.downsampleConfig()).thenReturn(
-        (DownsampleConfig) DownsampleConfig.newBuilder()
-        .setId("ds")
-        .setInterval("2h")
-        .setAggregator("avg")
-        .addInterpolatorConfig(NumericInterpolatorConfig.newBuilder()
-            .setFillPolicy(FillPolicy.NONE)
-            .setRealFillPolicy(FillWithRealPolicy.NONE)
-            .setType("interp")
-            .setDataType(NumericType.TYPE.toString())
+    source_config = (TimeSeriesDataSourceConfig) 
+        DefaultTimeSeriesDataSourceConfig.newBuilder()
+        .setMetric(MetricLiteralFilter.newBuilder()
+            .setMetric(METRIC_STRING)
             .build())
-        .build());
-    when(node.rollupAggregation()).thenReturn("avg");
+        .addSummaryAggregation("sum")
+        .addSummaryAggregation("count")
+        .setPrePadding("2h")
+        .setPostPadding("2h")
+        .setId("m1")
+        .build();
     scanners = new Tsdb1xScanners(node, source_config);
     stop = scanners.setStopKey(METRIC_BYTES, null);
     assertArrayEquals(makeRowKey(METRIC_BYTES, (END_TS - 900 + 10800), null), stop);
@@ -858,8 +837,8 @@ public class TestTsdb1xScanners extends UTBase {
     assertEquals(4, filter.filters().size());
     assertTrue(filter.filters().get(0) instanceof QualifierFilter);
     assertArrayEquals("sum".getBytes(), ((BinaryPrefixComparator) ((QualifierFilter) filter.filters().get(0)).comparator()).value());
-    assertArrayEquals("count".getBytes(), ((BinaryPrefixComparator) ((QualifierFilter) filter.filters().get(1)).comparator()).value());
-    assertArrayEquals(new byte[] { 1 }, ((BinaryPrefixComparator) ((QualifierFilter) filter.filters().get(2)).comparator()).value());
+    assertArrayEquals(new byte[] { 1 }, ((BinaryPrefixComparator) ((QualifierFilter) filter.filters().get(1)).comparator()).value());
+    assertArrayEquals("count".getBytes(), ((BinaryPrefixComparator) ((QualifierFilter) filter.filters().get(2)).comparator()).value());
     assertArrayEquals(new byte[] { 2 }, ((BinaryPrefixComparator) ((QualifierFilter) filter.filters().get(3)).comparator()).value());
     
     // raw
@@ -998,8 +977,8 @@ public class TestTsdb1xScanners extends UTBase {
       assertEquals(4, filter.filters().size());
       assertTrue(filter.filters().get(0) instanceof QualifierFilter);
       assertArrayEquals("sum".getBytes(), ((BinaryPrefixComparator) ((QualifierFilter) filter.filters().get(0)).comparator()).value());
-      assertArrayEquals("count".getBytes(), ((BinaryPrefixComparator) ((QualifierFilter) filter.filters().get(1)).comparator()).value());
-      assertArrayEquals(new byte[] { 1 }, ((BinaryPrefixComparator) ((QualifierFilter) filter.filters().get(2)).comparator()).value());
+      assertArrayEquals(new byte[] { 1 }, ((BinaryPrefixComparator) ((QualifierFilter) filter.filters().get(1)).comparator()).value());
+      assertArrayEquals("count".getBytes(), ((BinaryPrefixComparator) ((QualifierFilter) filter.filters().get(2)).comparator()).value());
       assertArrayEquals(new byte[] { 2 }, ((BinaryPrefixComparator) ((QualifierFilter) filter.filters().get(3)).comparator()).value());
     }
     
@@ -1187,10 +1166,13 @@ public class TestTsdb1xScanners extends UTBase {
             .build())
         .build();
     when(context.query()).thenReturn(query);
-    source_config = (TimeSeriesDataSourceConfig) DefaultTimeSeriesDataSourceConfig.newBuilder()
+    source_config = (TimeSeriesDataSourceConfig) 
+        DefaultTimeSeriesDataSourceConfig.newBuilder()
         .setMetric(MetricLiteralFilter.newBuilder()
             .setMetric(METRIC_STRING)
             .build())
+        .addSummaryAggregation("sum")
+        .addSummaryAggregation("count")
         .setFilterId("f1")
         .setId("m1")
         .build();
@@ -1239,6 +1221,8 @@ public class TestTsdb1xScanners extends UTBase {
     filter = (FilterList) ((FilterList) filter.filters().get(2));
     assertArrayEquals("sum".getBytes(), ((BinaryPrefixComparator) ((QualifierFilter) filter.filters().get(0)).comparator()).value());
     assertArrayEquals(new byte[] { 1 }, ((BinaryPrefixComparator) ((QualifierFilter) filter.filters().get(1)).comparator()).value());
+    assertArrayEquals("count".getBytes(), ((BinaryPrefixComparator) ((QualifierFilter) filter.filters().get(2)).comparator()).value());
+    assertArrayEquals(new byte[] { 2 }, ((BinaryPrefixComparator) ((QualifierFilter) filter.filters().get(3)).comparator()).value());
     
     // raw
     verify(caught.get(1), times(1)).setFamily(Tsdb1xHBaseDataStore.DATA_FAMILY);
@@ -1880,6 +1864,9 @@ public class TestTsdb1xScanners extends UTBase {
         .build();
     
     Tsdb1xScanners scanners = new Tsdb1xScanners(node, source_config);
+    Tsdb1xQueryResult result = mock(Tsdb1xQueryResult.class);
+    scanners.current_result = result;
+    
     scanners.initialize(null);
     
     assertNull(scanners.row_key_literals);
@@ -1887,15 +1874,13 @@ public class TestTsdb1xScanners extends UTBase {
     assertFalse(scanners.couldMultiGet());
     assertNull(scanners.scanners);
     assertFalse(scanners.initialized);
-    verify(node, times(1)).onError(any(NoSuchUniqueName.class));
-    verify(node, never()).onNext(any(QueryResult.class));
+    verify(node, never()).onError(any(NoSuchUniqueName.class));
+    verify(node, times(1)).onNext(result);
     verify(node, never()).onComplete(any(QueryNode.class), anyLong(), anyLong());
     
     trace = new MockTrace(true);
     scanners = new Tsdb1xScanners(node, source_config);
     scanners.initialize(trace.newSpan("UT").start());
-    verifySpan(Tsdb1xScanners.class.getName() + ".initialize", 
-        NoSuchUniqueName.class, 3);
   }
   
   @Test
@@ -1916,6 +1901,8 @@ public class TestTsdb1xScanners extends UTBase {
         .build();
     setConfig(filter, null, false);
     Tsdb1xScanners scanners = new Tsdb1xScanners(node, source_config);
+    Tsdb1xQueryResult result = mock(Tsdb1xQueryResult.class);
+    scanners.current_result = result;
     scanners.initialize(null);
     
     assertEquals(1, scanners.row_key_literals.size());
@@ -1923,12 +1910,13 @@ public class TestTsdb1xScanners extends UTBase {
     assertTrue(scanners.couldMultiGet());
     assertNull(scanners.scanners);
     assertFalse(scanners.initialized);
-    verify(node, times(1)).onError(any(NoSuchUniqueName.class));
-    verify(node, never()).onNext(any(QueryResult.class));
+    verify(node, never()).onError(any(NoSuchUniqueName.class));
+    verify(node, times(1)).onNext(result);
     verify(node, never()).onComplete(any(QueryNode.class), anyLong(), anyLong());
     
     // can't ignore with explicit tags
     scanners = new Tsdb1xScanners(node, source_config);
+    scanners.current_result = result;
     Whitebox.setInternalState(scanners, "skip_nsun_tagks", true);
     scanners.initialize(null);
     
@@ -1937,8 +1925,8 @@ public class TestTsdb1xScanners extends UTBase {
     assertTrue(scanners.couldMultiGet());
     assertNull(scanners.scanners);
     assertFalse(scanners.initialized);
-    verify(node, times(2)).onError(any(NoSuchUniqueName.class));
-    verify(node, never()).onNext(any(QueryResult.class));
+    verify(node, never()).onError(any(NoSuchUniqueName.class));
+    verify(node, times(2)).onNext(result);
     verify(node, never()).onComplete(any(QueryNode.class), anyLong(), anyLong());
     
     // tracing
@@ -1961,6 +1949,7 @@ public class TestTsdb1xScanners extends UTBase {
           .build();
     setConfig(filter, null, false);
     scanners = new Tsdb1xScanners(node, source_config);
+    scanners.current_result = result;
     Whitebox.setInternalState(scanners, "skip_nsun_tagks", true);
     scanners.initialize(null);
     
@@ -1969,8 +1958,8 @@ public class TestTsdb1xScanners extends UTBase {
     assertTrue(scanners.couldMultiGet());
     assertEquals(1, scanners.scanners.size());
     assertTrue(scanners.initialized);
-    verify(node, times(3)).onError(any(NoSuchUniqueName.class));
-    verify(node, never()).onNext(any(QueryResult.class));
+    verify(node, never()).onError(any(NoSuchUniqueName.class));
+    verify(node, times(2)).onNext(result);
     verify(node, never()).onComplete(any(QueryNode.class), anyLong(), anyLong());
   }
   
@@ -1990,6 +1979,8 @@ public class TestTsdb1xScanners extends UTBase {
         .build();
     setConfig(filter, null, false);
     Tsdb1xScanners scanners = new Tsdb1xScanners(node, source_config);
+    Tsdb1xQueryResult result = mock(Tsdb1xQueryResult.class);
+    scanners.current_result = result;
     scanners.initialize(null);
     
     assertEquals(0, scanners.row_key_literals.size());
@@ -1997,8 +1988,8 @@ public class TestTsdb1xScanners extends UTBase {
     assertTrue(scanners.couldMultiGet());
     assertNull(scanners.scanners);
     assertFalse(scanners.initialized);
-    verify(node, times(1)).onError(any(NoSuchUniqueName.class));
-    verify(node, never()).onNext(any(QueryResult.class));
+    verify(node, never()).onError(any(NoSuchUniqueName.class));
+    verify(node, times(1)).onNext(result);
     verify(node, never()).onComplete(any(QueryNode.class), anyLong(), anyLong());
     
     // tracing
@@ -2186,6 +2177,8 @@ public class TestTsdb1xScanners extends UTBase {
   @Test
   public void scanNext() throws Exception {
     Tsdb1xScanners scanners = new Tsdb1xScanners(node, source_config);
+    Tsdb1xQueryResult result = mock(Tsdb1xQueryResult.class);
+    scanners.current_result = result;
     Tsdb1xScanner scanner = mock(Tsdb1xScanner.class);
     when(scanner.state()).thenReturn(State.CONTINUE);
     scanners.scanners = Lists.<Tsdb1xScanner[]>newArrayList(
@@ -2193,24 +2186,26 @@ public class TestTsdb1xScanners extends UTBase {
         );
     
     scanners.scanNext(null);
-    verify(scanner, times(1)).fetchNext(null, null);
+    verify(scanner, times(1)).fetchNext(result, null);
     verify(node, never()).onError(any(Throwable.class));
     verify(node, never()).onNext(any(QueryResult.class));
     verify(node, never()).onComplete(any(QueryNode.class), anyLong(), anyLong());
     
-    doThrow(new UnitTestException()).when(scanner).fetchNext(null, null);
+    doThrow(new UnitTestException()).when(scanner).fetchNext(result, null);
     try {
       scanners.scanNext(null);
       fail("Expected UnitTestException");
     } catch (UnitTestException e) { }
-    verify(node, times(1)).onError(any(UnitTestException.class));
-    verify(node, never()).onNext(any(QueryResult.class));
+    verify(node, never()).onError(any(UnitTestException.class));
+    verify(node, times(1)).onNext(result);
     verify(node, never()).onComplete(any(QueryNode.class), anyLong(), anyLong());
   }
   
   @Test
   public void scanNextSalted() throws Exception {
     Tsdb1xScanners scanners = new Tsdb1xScanners(node, source_config);
+    Tsdb1xQueryResult result = mock(Tsdb1xQueryResult.class);
+    scanners.current_result = result;
     Tsdb1xScanner scanner1 = mock(Tsdb1xScanner.class);
     when(scanner1.state()).thenReturn(State.CONTINUE);
     Tsdb1xScanner scanner2 = mock(Tsdb1xScanner.class);
@@ -2220,19 +2215,19 @@ public class TestTsdb1xScanners extends UTBase {
         );
     
     scanners.scanNext(null);
-    verify(scanner1, times(1)).fetchNext(null, null);
-    verify(scanner2, times(1)).fetchNext(null, null);
+    verify(scanner1, times(1)).fetchNext(result, null);
+    verify(scanner2, times(1)).fetchNext(result, null);
     verify(node, never()).onError(any(Throwable.class));
     verify(node, never()).onNext(any(QueryResult.class));
     verify(node, never()).onComplete(any(QueryNode.class), anyLong(), anyLong());
     
-    doThrow(new UnitTestException()).when(scanner2).fetchNext(null, null);
+    doThrow(new UnitTestException()).when(scanner2).fetchNext(result, null);
     try {
       scanners.scanNext(null);
       fail("Expected UnitTestException");
     } catch (UnitTestException e) { }
-    verify(node, times(1)).onError(any(UnitTestException.class));
-    verify(node, never()).onNext(any(QueryResult.class));
+    verify(node, never()).onError(any(UnitTestException.class));
+    verify(node, times(1)).onNext(result);
     verify(node, never()).onComplete(any(QueryNode.class), anyLong(), anyLong());
   }
   
@@ -2269,16 +2264,20 @@ public class TestTsdb1xScanners extends UTBase {
   @Test
   public void exception() throws Exception {
     Tsdb1xScanners scanners = new Tsdb1xScanners(node, source_config);
+    Tsdb1xQueryResult result = mock(Tsdb1xQueryResult.class);
+    scanners.current_result = result;
     assertFalse(scanners.hasException());
     
     scanners.exception(new UnitTestException());
     assertTrue(scanners.hasException());
-    verify(node, times(1)).onError(any(UnitTestException.class));
+    verify(node, never()).onError(any(UnitTestException.class));
+    verify(node, times(1)).onNext(result);
     
     // nother scanner threw a failure
     scanners.exception(new UnitTestException());
     assertTrue(scanners.hasException());
-    verify(node, times(1)).onError(any(UnitTestException.class));
+    verify(node, never()).onError(any(UnitTestException.class));
+    verify(node, times(1)).onNext(result);
   }
   
   @Test
@@ -2445,6 +2444,16 @@ public class TestTsdb1xScanners extends UTBase {
     if (pre_agg) {
       builder.addOverride(Tsdb1xHBaseDataStore.PRE_AGG_KEY, "true");
     }
+    if (ds != null) {
+      if (ds.equals("avg")) {
+        builder.addSummaryAggregation("sum")
+               .addSummaryAggregation("count");
+      } else {
+        builder.addSummaryAggregation(ds);
+      }
+      builder.setPrePadding("1h")
+             .setPostPadding("1h");
+    }
     
     source_config = builder.build();
     
@@ -2462,20 +2471,6 @@ public class TestTsdb1xScanners extends UTBase {
             .setPreAggregationTable("tsdb-agg-30m")
             .setRowSpan("1d")
             .build()));
-      
-      when(node.downsampleConfig()).thenReturn(
-          (DownsampleConfig) DownsampleConfig.newBuilder()
-          .setId("ds")
-          .setInterval("1h")
-          .setAggregator(ds)
-          .addInterpolatorConfig(NumericInterpolatorConfig.newBuilder()
-              .setFillPolicy(FillPolicy.NONE)
-              .setRealFillPolicy(FillWithRealPolicy.NONE)
-              .setType("interp")
-              .setDataType(NumericType.TYPE.toString())
-              .build())
-          .build());
-      when(node.rollupAggregation()).thenReturn(ds);
     }
     return filter;
   }

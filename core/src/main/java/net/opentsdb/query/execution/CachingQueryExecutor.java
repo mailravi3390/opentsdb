@@ -20,8 +20,6 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-import org.jgrapht.experimental.dag.DirectedAcyclicGraph;
-import org.jgrapht.graph.DefaultEdge;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -670,6 +668,12 @@ public class CachingQueryExecutor extends BaseTSDBPlugin implements QuerySourceF
           .compareTrueFirst(use_timestamps, (((Config) config).use_timestamps))
           .result();
     }
+
+    @Override
+    public Builder toBuilder() {
+      // TODO Auto-generated method stub
+      return null;
+    }
     
     /** @return A new builder. */
     public static Builder newBuilder() {
@@ -782,6 +786,7 @@ public class CachingQueryExecutor extends BaseTSDBPlugin implements QuerySourceF
       }
       
     }
+
     
   }
   
@@ -808,7 +813,7 @@ public class CachingQueryExecutor extends BaseTSDBPlugin implements QuerySourceF
   }
 
   @Override
-  public void setupGraph(final TimeSeriesQuery query, 
+  public void setupGraph(final QueryPipelineContext context, 
                          final QueryNodeConfig config, 
                          final QueryPlanner plan) {
     // TODO Auto-generated method stub

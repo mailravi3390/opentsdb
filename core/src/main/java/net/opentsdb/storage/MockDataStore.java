@@ -72,6 +72,7 @@ import net.opentsdb.query.QueryPipelineContext;
 import net.opentsdb.query.QueryResult;
 import net.opentsdb.query.BaseTimeSeriesDataSourceConfig;
 import net.opentsdb.query.SemanticQuery;
+import net.opentsdb.query.TimeSeriesQuery.LogLevel;
 import net.opentsdb.query.filter.FilterUtils;
 import net.opentsdb.query.filter.QueryFilter;
 import net.opentsdb.rollup.DefaultRollupConfig;
@@ -502,6 +503,17 @@ public class MockDataStore implements WritableTimeSeriesDataStore {
     }
     
     @Override
+    public String error() {
+      return null;
+    }
+    
+    @Override
+    public Throwable exception() {
+      // TODO - implement
+      return null;
+    }
+    
+    @Override
     public long sequenceId() {
       return sequence_id;
     }
@@ -546,7 +558,7 @@ public class MockDataStore implements WritableTimeSeriesDataStore {
           }
           
           if (filter != null) {
-            if (!FilterUtils.matchesTags(filter, entry.getKey().tags())) {
+            if (!FilterUtils.matchesTags(filter, entry.getKey().tags(), null)) {
               continue;
             }
           }
@@ -581,7 +593,16 @@ public class MockDataStore implements WritableTimeSeriesDataStore {
         }
         
         if (LOG.isDebugEnabled()) {
-          LOG.debug("[" + MockDataStore.this.id + "@" + System.identityHashCode(MockDataStore.this) + "] DONE with filtering. " + pipeline + "  Results: " 
+          LOG.debug("[" + MockDataStore.this.id + "@" 
+              + System.identityHashCode(MockDataStore.this) 
+              + "] DONE with filtering. " + pipeline + "  Results: " 
+              + matched_series.size());
+        }
+        if (context.queryContext().query().getLogLevel().ordinal() >= 
+            LogLevel.DEBUG.ordinal()) {
+          context.queryContext().logDebug(pipeline, "[" + MockDataStore.this.id 
+              + "@" + System.identityHashCode(MockDataStore.this) 
+              + "] DONE with filtering. " + pipeline + "  Results: " 
               + matched_series.size());
         }
         if (pipeline.completed.get()) {
@@ -841,7 +862,8 @@ public class MockDataStore implements WritableTimeSeriesDataStore {
   }
 
   String configKey(final String suffix) {
-    return "tsd.storage." + (Strings.isNullOrEmpty(id) ? "" : id + ".")
-      + suffix;
+    return "tsd.storage." + (Strings.isNullOrEmpty(id) || 
+        id.equals(MockDataStoreFactory.TYPE) ? "" : id + ".")
+          + suffix;
   }
 }

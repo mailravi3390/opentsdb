@@ -14,6 +14,7 @@
 // limitations under the License.
 package net.opentsdb.servlet.resources;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -55,12 +56,12 @@ import net.opentsdb.auth.AuthState.AuthStatus;
 import net.opentsdb.core.TSDB;
 import net.opentsdb.core.Tags;
 import net.opentsdb.exceptions.QueryExecutionException;
-import net.opentsdb.query.TSDBV2QueryContextBuilder;
 import net.opentsdb.query.TSQuery;
 import net.opentsdb.query.TSSubQuery;
 import net.opentsdb.query.QueryContext;
 import net.opentsdb.query.QueryMode;
 import net.opentsdb.query.SemanticQuery;
+import net.opentsdb.query.SemanticQueryContext;
 import net.opentsdb.query.execution.serdes.JsonV2QuerySerdesOptions;
 import net.opentsdb.query.pojo.RateOptions;
 import net.opentsdb.query.pojo.TagVFilter;
@@ -88,7 +89,7 @@ import net.opentsdb.utils.StringUtils;
  * 
  * @since 2.0
  */
-@Path("api/query")
+@Path("query")
 final public class QueryRpc {
   private static final Logger LOG = LoggerFactory.getLogger(QueryRpc.class);
   private static final Logger QUERY_LOG = LoggerFactory.getLogger("QueryLog");
@@ -120,10 +121,18 @@ final public class QueryRpc {
   @POST
   @Produces(MediaType.APPLICATION_JSON)
   @Consumes(MediaType.APPLICATION_JSON)
-  public void post(final @Context ServletConfig servlet_config, 
-                       final @Context HttpServletRequest request,
-                       final @Context HttpServletResponse response) throws Exception {
-    handleQuery(servlet_config, request, response, false);
+  public Response post(final @Context ServletConfig servlet_config, 
+                       final @Context HttpServletRequest request/*,
+                       final @Context HttpServletResponse response*/) throws Exception {
+    final Object stream = request.getAttribute("DATA");
+    if (stream != null) {
+      return Response.ok()
+          .entity(((ByteArrayOutputStream) stream).toByteArray())
+          .header("Content-Type", "application/json")
+          .build();
+    }
+    
+    return handleQuery(servlet_config, request, false);
   }
   
   /**
@@ -136,10 +145,18 @@ final public class QueryRpc {
    */
   @GET
   @Produces(MediaType.APPLICATION_JSON)
-  public void get(final @Context ServletConfig servlet_config, 
-                      final @Context HttpServletRequest request,
-                      final @Context HttpServletResponse response) throws Exception {
-    handleQuery(servlet_config, request, response, true);
+  public Response get(final @Context ServletConfig servlet_config, 
+                      final @Context HttpServletRequest request/*,
+                      final @Context HttpServletResponse response*/) throws Exception {
+    final Object stream = request.getAttribute("DATA");
+    if (stream != null) {
+      return Response.ok()
+          .entity(((ByteArrayOutputStream) stream).toByteArray())
+          .header("Content-Type", "application/json")
+          .build();
+    }
+    
+    return handleQuery(servlet_config, request, true);
   }
   
   /**
@@ -152,9 +169,8 @@ final public class QueryRpc {
    * @throws Exception if something went pear shaped.
    */
   @VisibleForTesting
-  void handleQuery(final ServletConfig servlet_config, 
+  Response handleQuery(final ServletConfig servlet_config, 
                        final HttpServletRequest request,
-                       final HttpServletResponse response,
                        final boolean is_get) throws Exception {
     Object obj = servlet_config.getServletContext()
         .getAttribute(OpenTSDBApplication.TSD_ATTRIBUTE);
@@ -264,10 +280,12 @@ final public class QueryRpc {
         .put("query", ts_query)
         .build()));
     
-    Span setup_span = null;
+    final Span setup_span;
     if (query_span != null) {
       setup_span = query_span.newChild("setupContext")
           .start();
+    } else {
+      setup_span = null;
     }
     
     // start the Async context and pass it around. 
@@ -291,17 +309,19 @@ final public class QueryRpc {
           .build();
     }
     
-    final QueryContext ctx = TSDBV2QueryContextBuilder.newBuilder(tsdb)
+    final QueryContext ctx = SemanticQueryContext.newBuilder()
+        .setTSDB(tsdb)
         .setQuery(q)
         .setMode(QueryMode.SINGLE)
         .setStats(DefaultQueryStats.newBuilder()
             .setTrace(trace)
             .setQuerySpan(query_span)
             .build())
+        .setAuthState(auth_state)
         .addSink(ServletSinkConfig.newBuilder()
             .setId(ServletSinkFactory.TYPE)
             .setSerdesOptions(serdes)
-            .setResponse(response)
+            .setRequest(request)
             .setAsync(async)
             .build())
         .build();
@@ -321,9 +341,17 @@ final public class QueryRpc {
         } catch (Exception e) {
           LOG.error("Failed to close the query: ", e);
         }
+        
         GenericExceptionMapper.serialize(
             new QueryExecutionException("The query has exceeded "
-            + "the timeout limit.", 504), event.getSuppliedResponse());
+            + "the timeout limit.", 504), event.getAsyncContext().getResponse());
+        event.getAsyncContext().complete();
+        
+        try {
+          ctx.close();
+        } catch (Throwable t) {
+          LOG.error("Failed to close the query context", t);
+        }
       }
 
       @Override
@@ -339,41 +367,45 @@ final public class QueryRpc {
     }
 
     async.addListener(new AsyncTimeout());
-    
-    Span execute_span = null;
-    try {
-      ctx.initialize(query_span).join();
-      if (setup_span != null) {
-        setup_span.setSuccessTags()
-                  .finish();
+    async.start(new Runnable() {
+      public void run() {
+        Span execute_span = null;
+        try {
+          ctx.initialize(query_span).join();
+          if (setup_span != null) {
+            setup_span.setSuccessTags()
+                      .finish();
+          }
+          
+          if (query_span != null) {
+            execute_span = trace.newSpanWithThread("startExecution")
+                .withTag("startThread", Thread.currentThread().getName())
+                .asChildOf(query_span)
+                .start();
+          }
+          ctx.fetchNext(query_span);
+        } catch (Throwable t) {
+          LOG.error("Unexpected exception adding callbacks to deferred.", t);
+          //GenericExceptionMapper.serialize(t, response);
+          if (execute_span != null) {
+            execute_span.setErrorTags(t)
+                        .finish();
+          }
+          async.complete();
+          if (query_span != null) {
+            query_span.setErrorTags(t)
+                       .finish();
+          }
+          throw new QueryExecutionException("Unexpected expection", 500, t);
+        }
+        
+        if (execute_span != null) {
+          execute_span.setSuccessTags()
+                      .finish();
+        }
       }
-      
-      if (query_span != null) {
-        execute_span = trace.newSpanWithThread("startExecution")
-            .withTag("startThread", Thread.currentThread().getName())
-            .asChildOf(query_span)
-            .start();
-      }
-      ctx.fetchNext(query_span);
-    } catch (Throwable t) {
-      LOG.error("Unexpected exception adding callbacks to deferred.", t);
-      GenericExceptionMapper.serialize(t, response);
-      if (execute_span != null) {
-        execute_span.setErrorTags(t)
-                    .finish();
-      }
-      async.complete();
-      if (query_span != null) {
-        query_span.setErrorTags(t)
-                   .finish();
-      }
-      return;
-    }
-    
-    if (execute_span != null) {
-      execute_span.setSuccessTags()
-                  .finish();
-    }
+    });
+    return null;
   }
   
 //  /**

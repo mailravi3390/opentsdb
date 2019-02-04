@@ -101,9 +101,6 @@ public class ExpressionParseNode extends BaseQueryNodeConfig {
     }
   }
   
-  /** ID shadow needed to allow for overrides. */
-  private String id;
-  
   /** The output metric name. Defaults to the ID. */
   private String as;
   
@@ -131,6 +128,10 @@ public class ExpressionParseNode extends BaseQueryNodeConfig {
   /** A link to the original expression config. */
   private final ExpressionConfig expression_config;
   
+  /** Node IDs for linking results. */
+  private String left_id;
+  private String right_id;
+  
   /**
    * Protected ctor.
    * @param builder The non-null builder.
@@ -140,7 +141,6 @@ public class ExpressionParseNode extends BaseQueryNodeConfig {
     if (builder.expressionConfig == null) {
       throw new IllegalArgumentException("Missing parent expression config.");
     }
-    this.id = super.getId();
     left = builder.left;
     left_type = builder.leftType;
     right = builder.right;
@@ -148,8 +148,10 @@ public class ExpressionParseNode extends BaseQueryNodeConfig {
     op = builder.op;
     negate = builder.negate;
     not = builder.not;
-    as = id;
+    as = Strings.isNullOrEmpty(builder.as) ? id : builder.as;
     expression_config = builder.expressionConfig;
+    left_id = builder.leftId;
+    right_id = builder.rightId;
   }
   
   /** @return The name to use for the metric. Defaults to the ID. */
@@ -182,19 +184,9 @@ public class ExpressionParseNode extends BaseQueryNodeConfig {
     return op;
   }
   
-  /** @param negate Whether or not to negate the output. */
-  public void setNegate(final boolean negate) {
-    this.negate = negate;
-  }
-  
   /** @return Whether or not to negate the output. */
   public boolean getNegate() {
     return negate;
-  }
-  
-  /** @param not Whether or not to "not" the output. */
-  public void setNot(final boolean not) {
-    this.not = not;
   }
   
   /** @return Whether or not to "not" the output. */
@@ -202,19 +194,19 @@ public class ExpressionParseNode extends BaseQueryNodeConfig {
     return not;
   }
   
-  /** @param id The new id to set. */
-  public void setLeft(final String id) {
-    left = id;
-  }
-  
-  /** @param id The new id to set. */
-  public void setRight(final String id) {
-    right = id;
-  }
-  
   /** @return The original expressionConfig. */
   public ExpressionConfig getExpressionConfig() {
     return expression_config;
+  }
+  
+  /** @return The left result source ID, may be null. */
+  public String getLeftId() {
+    return left_id;
+  }
+  
+  /** @return The right result source ID, may be null. */
+  public String getRightId() {
+    return right_id;
   }
   
   @Override
@@ -267,14 +259,20 @@ public class ExpressionParseNode extends BaseQueryNodeConfig {
     return new StringBuilder()
         .append("{id=")
         .append(id)
+        .append(", as=")
+        .append(as)
         .append(", left=")
         .append(left)
         .append(", leftType=")
         .append(left_type)
+        .append(", leftId=")
+        .append(left_id)
         .append(", right=")
         .append(right)
         .append(", rightType=")
         .append(right_type)
+        .append(", rightId=")
+        .append(right_id)
         .append(", op=")
         .append(op)
         .append(", negate=")
@@ -285,34 +283,21 @@ public class ExpressionParseNode extends BaseQueryNodeConfig {
         .toString();
   }
   
-  @Override
-  public String getId() {
-    return id;
-  }
-  
-  void addSource(final String source) {
-    // NOTE: since it could be set to Collections.emptyList() we need 
-    // to store an actual list.
-    if (sources == null || sources.isEmpty()) {
-      sources = Lists.newArrayListWithExpectedSize(2);
-    }
-    sources.add(source);
-  }
-  
-  /**
-   * Package private method to override the ID
-   * @param id A non-null ID to set.
-   */
-  void overrideId(final String id) {
-    this.id = id;
-  }
-  
-  /**
-   * Package private method to override the as string.
-   * @param as The non-null as string to set for the new metric.
-   */
-  void overrideAs(final String as) {
-    this.as = as;
+  public Builder toBuilder() {
+    return (Builder) new Builder()
+        .setExpressionConfig(expression_config)
+        .setExpressionOp(op)
+        .setLeft(left)
+        .setLeftType(left_type)
+        .setRight(right)
+        .setRightType(right_type)
+        .setNegate(negate)
+        .setNot(not)
+        .setAs(as)
+        .setLeftId(left_id)
+        .setRightId(right_id)
+        .setSources(Lists.newArrayList(sources))
+        .setId(id);
   }
   
   static Builder newBuilder() {
@@ -336,6 +321,12 @@ public class ExpressionParseNode extends BaseQueryNodeConfig {
     private boolean not;
     @JsonProperty
     private ExpressionConfig expressionConfig;
+    @JsonProperty
+    private String as;
+    @JsonProperty
+    private String leftId;
+    @JsonProperty
+    private String rightId;
     
     Builder() {
       setType(BinaryExpressionNodeFactory.TYPE);
@@ -378,6 +369,33 @@ public class ExpressionParseNode extends BaseQueryNodeConfig {
     
     public Builder setExpressionConfig(final ExpressionConfig expression_config) {
       this.expressionConfig = expression_config;
+      return this;
+    }
+    
+    public Builder setAs(final String as) {
+      this.as = as;
+      return this;
+    }
+    
+    public Object left() {
+      return left;
+    }
+    
+    public Object right() {
+      return right;
+    }
+    
+    public String id() {
+      return id;
+    }
+    
+    public Builder setLeftId(final String left_id) {
+      this.leftId = left_id;
+      return this;
+    }
+    
+    public Builder setRightId(final String right_id) {
+      this.rightId = right_id;
       return this;
     }
     

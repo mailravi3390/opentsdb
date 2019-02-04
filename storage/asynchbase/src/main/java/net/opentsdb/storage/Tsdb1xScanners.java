@@ -39,6 +39,7 @@ import com.stumbleupon.async.Callback;
 import net.opentsdb.configuration.Configuration;
 import net.opentsdb.core.Const;
 import net.opentsdb.query.QueryNode;
+import net.opentsdb.query.QueryResult;
 import net.opentsdb.query.TimeSeriesDataSourceConfig;
 import net.opentsdb.query.filter.ExplicitTagsFilter;
 import net.opentsdb.query.filter.NotFilter;
@@ -364,7 +365,11 @@ public class Tsdb1xScanners implements HBaseExecutor {
     if (LOG.isDebugEnabled()) {
       LOG.debug("Exception from downstream", t);
     }
-    node.onError(t);
+    
+    current_result.setException(t);
+    final QueryResult result = current_result;
+    current_result = null;
+    node.onNext(result);
   }
 
   @Override
@@ -384,6 +389,11 @@ public class Tsdb1xScanners implements HBaseExecutor {
   
   @Override
   public State state() {
+    synchronized (this) {
+      if (has_failed) {
+        return State.EXCEPTION;
+      }
+    }
     if (!initialized && scanners == null) {
       return State.CONTINUE;
     }
@@ -422,9 +432,9 @@ public class Tsdb1xScanners implements HBaseExecutor {
       // interval in which it appears, if downsampling.
       
       // TODO - doesn't account for calendaring, etc.
-      if (node.downsampleConfig() != null) {
+      if (!Strings.isNullOrEmpty(source_config.getPrePadding())) {
         final long interval = DateTime.parseDuration(
-            node.downsampleConfig().getInterval());
+            source_config.getPrePadding());
         if (interval > 0) {
           final long interval_offset = (1000L * start) % interval;
           start -= interval_offset / 1000L;
@@ -470,9 +480,8 @@ public class Tsdb1xScanners implements HBaseExecutor {
             rollup_interval);
     } else {
       long interval = 0;
-      if (node.downsampleConfig() != null) {
-        interval = DateTime.parseDuration(
-            node.downsampleConfig().getInterval());
+      if (!Strings.isNullOrEmpty(source_config.getPostPadding())) {
+        interval = DateTime.parseDuration(source_config.getPostPadding());
       }
 
       if (interval > 0) {
@@ -546,8 +555,7 @@ public class Tsdb1xScanners implements HBaseExecutor {
           child.setErrorTags(ex)
                .finish();
         }
-        node.onError(ex);
-        has_failed = true;
+        exception(ex);
         return null;
       }
     }
@@ -558,13 +566,14 @@ public class Tsdb1xScanners implements HBaseExecutor {
       public Object call(final byte[] metric) throws Exception {
         if (metric == null) {
           final NoSuchUniqueName ex = new NoSuchUniqueName(Schema.METRIC_TYPE, 
-              source_config.getMetric().getMetric());
+              !Strings.isNullOrEmpty(source_config.getNamespace()) ? 
+                  source_config.getNamespace() + source_config.getMetric().getMetric() :
+                    source_config.getMetric().getMetric());
           if (child != null) {
             child.setErrorTags(ex)
                  .finish();
           }
-          node.onError(ex);
-          has_failed = true;
+          exception(ex);
           return null;
         }
         
@@ -592,7 +601,10 @@ public class Tsdb1xScanners implements HBaseExecutor {
     }
     
     try {
-      node.schema().getId(UniqueIdType.METRIC, source_config.getMetric().getMetric(), 
+      node.schema().getId(UniqueIdType.METRIC, 
+          !Strings.isNullOrEmpty(source_config.getNamespace()) ? 
+              source_config.getNamespace() + source_config.getMetric().getMetric() :
+                source_config.getMetric().getMetric(), 
           child)
         .addCallback(new MetricCB())
         .addErrback(new ErrorCB());
@@ -602,7 +614,7 @@ public class Tsdb1xScanners implements HBaseExecutor {
         child.setErrorTags(e)
              .finish();
       }
-      node.onError(e);
+      exception(e);
     }
   }
   
@@ -669,38 +681,19 @@ public class Tsdb1xScanners implements HBaseExecutor {
           node.rollupUsage() != RollupUsage.ROLLUP_RAW) {
         
         // set qualifier filters
-        if (node.rollupAggregation() != null && 
-            node.rollupAggregation().equals("avg")) {
-          // old and new schemas with literal agg names or prefixes.
-          final List<ScanFilter> filters = Lists.newArrayListWithCapacity(4);
+        final List<ScanFilter> filters = Lists.newArrayListWithCapacity(
+            source_config.getSummaryAggregations().size() * 2);
+        for (final String agg : source_config.getSummaryAggregations()) {
           filters.add(new QualifierFilter(CompareFilter.CompareOp.EQUAL,
-              new BinaryPrefixComparator("sum".getBytes(Const.ASCII_CHARSET))));
-          filters.add(new QualifierFilter(CompareFilter.CompareOp.EQUAL,
-              new BinaryPrefixComparator("count".getBytes(Const.ASCII_CHARSET))));
+              new BinaryPrefixComparator(
+                  agg.toLowerCase().getBytes(Const.ASCII_CHARSET))));
           filters.add(new QualifierFilter(CompareFilter.CompareOp.EQUAL,
               new BinaryPrefixComparator(new byte[] { 
-                  (byte) node.schema().rollupConfig().getIdForAggregator("sum")
+                  (byte) node.schema().rollupConfig().getIdForAggregator(
+                      agg.toLowerCase())
               })));
-          filters.add(new QualifierFilter(CompareFilter.CompareOp.EQUAL,
-              new BinaryPrefixComparator(new byte[] { 
-                  (byte) node.schema().rollupConfig().getIdForAggregator("count")
-              })));
-          
-          rollup_filter = new FilterList(filters, Operator.MUST_PASS_ONE);
-        } else {
-          // it's another aggregation
-          final List<ScanFilter> filters = Lists.newArrayListWithCapacity(2);
-          filters.add(new QualifierFilter(CompareFilter.CompareOp.EQUAL,
-              new BinaryPrefixComparator(node.rollupAggregation()
-                  .getBytes(Const.ASCII_CHARSET))));
-          filters.add(new QualifierFilter(CompareFilter.CompareOp.EQUAL,
-              new BinaryPrefixComparator(new byte[] { 
-                  (byte) node.schema().rollupConfig()
-                    .getIdForAggregator(node.rollupAggregation())
-              })));
-          
-          rollup_filter = new FilterList(filters, Operator.MUST_PASS_ONE);
         }
+        rollup_filter = new FilterList(filters, Operator.MUST_PASS_ONE);
       } else {
         rollup_filter = null;
       }
@@ -881,7 +874,7 @@ public class Tsdb1xScanners implements HBaseExecutor {
           scanner.fetchNext(current_result, span);
         } catch (Exception e) {
           LOG.error("Failed to execute query on scanner: " + scanner, e);
-          node.onError(e);
+          exception(e);
           throw e;
         }
       } else {

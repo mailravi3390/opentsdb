@@ -15,7 +15,6 @@
 package net.opentsdb.servlet.sinks;
 
 import java.io.ByteArrayOutputStream;
-import java.io.IOException;
 
 import javax.ws.rs.core.Response;
 
@@ -25,12 +24,15 @@ import org.slf4j.LoggerFactory;
 import com.google.common.collect.ImmutableMap;
 import com.stumbleupon.async.Callback;
 
+import net.opentsdb.exceptions.QueryExecutionException;
 import net.opentsdb.query.QueryContext;
+import net.opentsdb.query.QueryMode;
 import net.opentsdb.query.QueryResult;
 import net.opentsdb.query.QuerySink;
 import net.opentsdb.query.serdes.SerdesFactory;
 import net.opentsdb.query.serdes.TimeSeriesSerdes;
 import net.opentsdb.servlet.exceptions.GenericExceptionMapper;
+import net.opentsdb.servlet.exceptions.QueryExecutionExceptionMapper;
 import net.opentsdb.stats.Span;
 import net.opentsdb.utils.Bytes;
 import net.opentsdb.utils.JSON;
@@ -88,27 +90,36 @@ public class ServletSink implements QuerySink {
   
   @Override
   public void onComplete() {
+    if (context.query().isTraceEnabled()) {
+      context.logTrace("Query serialization complete.");
+    }
+    if (context.query().getMode() == QueryMode.VALIDATE) {
+      // no-op
+      return;
+    }
     try {
       serdes.serializeComplete(null);
-      try {
-        // TODO - oh this is sooooo ugly.... *sniff*
-        config.response().setContentType("application/json");
-        final byte[] data = stream.toByteArray();
-        stream.close();
-        config.response().setContentLength(data.length);
-        config.response().setStatus(200);
-        config.response().getOutputStream().write(data);
-        config.response().getOutputStream().close();
-      } catch (IOException e1) {
-        onError(e1);
-        return;
-      }
-      config.async().complete();
+      config.request().setAttribute("DATA", stream);
+//      try {
+//        // TODO - oh this is sooooo ugly.... *sniff*
+//        config.response().setContentType("application/json");
+//        final byte[] data = stream.toByteArray();
+//        stream.close();
+//        config.response().setContentLength(data.length);
+//        config.response().setStatus(200);
+//        config.response().getOutputStream().write(data);
+//        config.response().getOutputStream().close();
+//      } catch (IOException e1) {
+//        onError(e1);
+//        return;
+//      }
+      //config.async().complete();
+      config.async().dispatch();
       logComplete();
     } catch (Exception e) {
       LOG.error("Unexpected exception dispatching async request for "
           + "query: " + JSON.serializeToString(context.query()), e);
-      GenericExceptionMapper.serialize(e, config.response());
+      GenericExceptionMapper.serialize(e, config.async().getResponse());
       config.async().complete();
       logComplete();
     }
@@ -119,27 +130,54 @@ public class ServletSink implements QuerySink {
 
   @Override
   public void onNext(final QueryResult next) {
+    if (next.exception() != null) {
+      onError(next.exception());
+      return;
+    }
+    
+    if (next.error() != null) {
+      onError(new QueryExecutionException(next.error(), 0));
+      return;
+    }
+    
     if (LOG.isDebugEnabled()) {
       LOG.debug("Successful response for query=" 
           + JSON.serializeToString(
               ImmutableMap.<String, Object>builder()
               // TODO - possible upstream headers
               .put("queryId", Bytes.byteArrayToString(context.query().buildHashCode().asBytes()))
-              //.put("queryHash", Bytes.byteArrayToString(context.query().buildTimelessHashCode().asBytes()))
-              //.put("traceId", trace != null ? trace.traceId() : "")
-              .put("query", JSON.serializeToString(context.query()))
+              .put("node", next.source().config().getId() + ":" + next.dataSource())
               .build()));
+    }
+    if (context.query().isTraceEnabled()) {
+      context.logTrace(next.source(), "Received response: " 
+          + next.source().config().getId() + ":" + next.dataSource());
     }
     
     final Span serdes_span = context.stats().querySpan() != null ?
-        context.stats().querySpan().newChild("onNext_" + next.source().config().getId() + ":" + next.dataSource())
+        context.stats().querySpan().newChild("onNext_" 
+            + next.source().config().getId() + ":" + next.dataSource())
         .start()
         : null;
     
     class FinalCB implements Callback<Void, Object> {
       @Override
       public Void call(final Object ignored) throws Exception {
-        next.close();
+        if (ignored != null && ignored instanceof Throwable) {
+          LOG.error("Failed to serialize result: " 
+              + next.source().config().getId() + ":" 
+              + next.dataSource(), (Throwable) ignored);
+        }
+        try {
+          next.close();
+        } catch (Throwable t) {
+          LOG.warn("Failed to close result: " 
+              + next.source().config().getId() + ":" + next.dataSource(), t);
+        }
+        if (context.query().isTraceEnabled()) {
+          context.logTrace(next.source(), "Finished serializing response: " 
+              + next.source().config().getId() + ":" + next.dataSource());
+        }
         if (serdes_span != null) {
           serdes_span.setSuccessTags().finish();
         }
@@ -160,8 +198,15 @@ public class ServletSink implements QuerySink {
   public void onError(final Throwable t) {
     LOG.error("Exception for query: " 
         + JSON.serializeToString(context.query()), t);
+    context.logError("Error sent to the query sink: " + t.getMessage());
     try {
-      GenericExceptionMapper.serialize(t, config.response());
+      if (t instanceof QueryExecutionException) {
+        QueryExecutionExceptionMapper.serialize(
+            (QueryExecutionException) t, 
+            config.async().getResponse());
+      } else {
+        GenericExceptionMapper.serialize(t, config.async().getResponse());
+      }
       config.async().complete();
       logComplete(t);
     } catch (Throwable t1) {

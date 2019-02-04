@@ -16,24 +16,25 @@ package net.opentsdb.query.processor.expressions;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import java.util.List;
 
-import org.jgrapht.experimental.dag.DirectedAcyclicGraph;
-import org.jgrapht.graph.DefaultEdge;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
 import com.google.common.collect.Lists;
+import com.google.common.graph.GraphBuilder;
+import com.google.common.graph.MutableGraph;
 
 import net.opentsdb.data.types.numeric.NumericType;
-import net.opentsdb.query.TimeSeriesQuery;
 import net.opentsdb.query.QueryFillPolicy.FillWithRealPolicy;
 import net.opentsdb.query.DefaultTimeSeriesDataSourceConfig;
 import net.opentsdb.query.QueryNodeConfig;
+import net.opentsdb.query.QueryPipelineContext;
 import net.opentsdb.query.filter.MetricLiteralFilter;
 import net.opentsdb.query.interpolation.types.numeric.NumericInterpolatorConfig;
 import net.opentsdb.query.joins.JoinConfig;
@@ -76,8 +77,8 @@ public class TestExpressionFactory {
   @Test
   public void setupGraph1MetricDirect() throws Exception {
     ExpressionFactory factory = new ExpressionFactory();
-    DirectedAcyclicGraph<QueryNodeConfig, DefaultEdge> graph =
-        new DirectedAcyclicGraph<QueryNodeConfig, DefaultEdge>(DefaultEdge.class);
+    MutableGraph<QueryNodeConfig> graph = GraphBuilder.directed()
+        .allowsSelfLoops(false).build();
     
     List<QueryNodeConfig> query = Lists.newArrayList(
         DefaultTimeSeriesDataSourceConfig.newBuilder()
@@ -100,38 +101,36 @@ public class TestExpressionFactory {
     QueryPlanner plan = mock(QueryPlanner.class);
     when(plan.configGraph()).thenReturn(graph);
     
-    graph.addVertex(SINK);
-    graph.addVertex(query.get(0));
-    graph.addVertex(query.get(1));
-    graph.addDagEdge(query.get(1), query.get(0));
-    graph.addDagEdge(SINK, query.get(1));
+    graph.putEdge(query.get(1), query.get(0));
+    graph.putEdge(SINK, query.get(1));
     
-    factory.setupGraph(mock(TimeSeriesQuery.class), query.get(1), plan);
-    assertEquals(3, graph.vertexSet().size());
-    assertTrue(graph.containsVertex(query.get(0)));
-    assertFalse(graph.containsVertex(query.get(1)));
-    assertTrue(graph.containsVertex(SINK));
+    factory.setupGraph(mock(QueryPipelineContext.class), query.get(1), plan);
+    assertEquals(3, graph.nodes().size());
+    assertTrue(graph.nodes().contains(query.get(0)));
+    assertFalse(graph.nodes().contains(query.get(1)));
+    assertTrue(graph.nodes().contains(SINK));
     
-    QueryNodeConfig b1 = graph.getEdgeSource(
-        graph.incomingEdgesOf(query.get(0)).iterator().next());
+    QueryNodeConfig b1 = graph.predecessors(query.get(0)).iterator().next();
     assertEquals("BinaryExpression", b1.getType());
-    assertTrue(graph.containsEdge(b1, query.get(0)));
-    assertTrue(graph.containsEdge(SINK, b1));
+    assertTrue(graph.hasEdgeConnecting(b1, query.get(0)));
+    assertTrue(graph.hasEdgeConnecting(SINK, b1));
     
     ExpressionParseNode p1 = (ExpressionParseNode) b1;
     assertEquals("expression", p1.getId());
     assertEquals("sys.cpu.user", p1.getLeft());
+    assertEquals("m1", p1.getLeftId());
     assertEquals(OperandType.VARIABLE, p1.getLeftType());
     assertEquals(42, ((NumericLiteral) p1.getRight()).longValue());
     assertEquals(OperandType.LITERAL_NUMERIC, p1.getRightType());
+    assertNull(p1.getRightId());
     assertEquals(ExpressionOp.ADD, p1.getOperator());
   }
   
   @Test
   public void setupGraph1MetricThroughNode() throws Exception {
     ExpressionFactory factory = new ExpressionFactory();
-    DirectedAcyclicGraph<QueryNodeConfig, DefaultEdge> graph =
-        new DirectedAcyclicGraph<QueryNodeConfig, DefaultEdge>(DefaultEdge.class);
+    MutableGraph<QueryNodeConfig> graph = GraphBuilder.directed()
+        .allowsSelfLoops(false).build();
     
     QueryNodeConfig m1 = DefaultTimeSeriesDataSourceConfig.newBuilder()
         .setMetric(MetricLiteralFilter.newBuilder()
@@ -158,43 +157,39 @@ public class TestExpressionFactory {
     QueryPlanner plan = mock(QueryPlanner.class);
     when(plan.configGraph()).thenReturn(graph);
     
-    graph.addVertex(SINK);
-    graph.addVertex(m1);
-    graph.addVertex(ds);
-    graph.addVertex(exp);
-    graph.addDagEdge(ds, m1);
-    graph.addDagEdge(exp, ds);
-    graph.addDagEdge(SINK, exp);
+    graph.putEdge(ds, m1);
+    graph.putEdge(exp, ds);
+    graph.putEdge(SINK, exp);
     
-    factory.setupGraph(mock(TimeSeriesQuery.class), exp, plan);
-    assertEquals(4, graph.vertexSet().size());
-    assertTrue(graph.containsVertex(m1));
-    assertTrue(graph.containsVertex(ds));
-    assertFalse(graph.containsVertex(exp));
-    assertTrue(graph.containsVertex(SINK));
+    factory.setupGraph(mock(QueryPipelineContext.class), exp, plan);
+    assertEquals(4, graph.nodes().size());
+    assertTrue(graph.nodes().contains(m1));
+    assertTrue(graph.nodes().contains(ds));
+    assertFalse(graph.nodes().contains(exp));
+    assertTrue(graph.nodes().contains(SINK));
     
-    QueryNodeConfig b1 = graph.getEdgeSource(
-        graph.incomingEdgesOf(ds).iterator().next());
+    QueryNodeConfig b1 = graph.predecessors(ds).iterator().next();
     assertEquals("BinaryExpression", b1.getType());
-    assertTrue(graph.containsEdge(ds, m1));
-    assertTrue(graph.containsEdge(b1, ds));
-    assertTrue(graph.containsEdge(SINK, b1));
+    assertTrue(graph.hasEdgeConnecting(ds, m1));
+    assertTrue(graph.hasEdgeConnecting(b1, ds));
+    assertTrue(graph.hasEdgeConnecting(SINK, b1));
     
     ExpressionParseNode p1 = (ExpressionParseNode) b1;
     assertEquals("expression", p1.getId());
     assertEquals("sys.cpu.user", p1.getLeft());
+    assertEquals("m1", p1.getLeftId());
     assertEquals(OperandType.VARIABLE, p1.getLeftType());
     assertEquals(42, ((NumericLiteral) p1.getRight()).longValue());
     assertEquals(OperandType.LITERAL_NUMERIC, p1.getRightType());
+    assertNull(p1.getRightId());
     assertEquals(ExpressionOp.ADD, p1.getOperator());
   }
   
   @Test
   public void setupGraph2MetricsThroughNode() throws Exception {
     ExpressionFactory factory = new ExpressionFactory();
-    
-    DirectedAcyclicGraph<QueryNodeConfig, DefaultEdge> graph =
-        new DirectedAcyclicGraph<QueryNodeConfig, DefaultEdge>(DefaultEdge.class);
+    MutableGraph<QueryNodeConfig> graph = GraphBuilder.directed()
+        .allowsSelfLoops(false).build();
     
     QueryNodeConfig m1 = DefaultTimeSeriesDataSourceConfig.newBuilder()
         .setMetric(MetricLiteralFilter.newBuilder()
@@ -228,37 +223,33 @@ public class TestExpressionFactory {
     QueryPlanner plan = mock(QueryPlanner.class);
     when(plan.configGraph()).thenReturn(graph);
     
-    graph.addVertex(SINK);
-    graph.addVertex(m1);
-    graph.addVertex(m2);
-    graph.addVertex(ds);
-    graph.addVertex(exp);
-    graph.addDagEdge(ds, m1);
-    graph.addDagEdge(ds, m2);
-    graph.addDagEdge(exp, ds);
-    graph.addDagEdge(SINK, exp);
+    graph.putEdge(ds, m1);
+    graph.putEdge(ds, m2);
+    graph.putEdge(exp, ds);
+    graph.putEdge(SINK, exp);
     
-    factory.setupGraph(mock(TimeSeriesQuery.class), exp, plan);
-    assertEquals(5, graph.vertexSet().size());
-    assertTrue(graph.containsVertex(m1));
-    assertTrue(graph.containsVertex(m2));
-    assertTrue(graph.containsVertex(ds));
-    assertFalse(graph.containsVertex(exp));
-    assertTrue(graph.containsVertex(SINK));
+    factory.setupGraph(mock(QueryPipelineContext.class), exp, plan);
+    assertEquals(5, graph.nodes().size());
+    assertTrue(graph.nodes().contains(m1));
+    assertTrue(graph.nodes().contains(m2));
+    assertTrue(graph.nodes().contains(ds));
+    assertFalse(graph.nodes().contains(exp));
+    assertTrue(graph.nodes().contains(SINK));
     
-    QueryNodeConfig b1 = graph.getEdgeSource(
-        graph.incomingEdgesOf(ds).iterator().next());
+    QueryNodeConfig b1 = graph.predecessors(ds).iterator().next();
     assertEquals("BinaryExpression", b1.getType());
-    assertTrue(graph.containsEdge(ds, m1));
-    assertTrue(graph.containsEdge(ds, m2));
-    assertTrue(graph.containsEdge(b1, ds));
-    assertTrue(graph.containsEdge(SINK, b1));
+    assertTrue(graph.hasEdgeConnecting(ds, m1));
+    assertTrue(graph.hasEdgeConnecting(ds, m2));
+    assertTrue(graph.hasEdgeConnecting(b1, ds));
+    assertTrue(graph.hasEdgeConnecting(SINK, b1));
     
     ExpressionParseNode p1 = (ExpressionParseNode) b1;
     assertEquals("expression", p1.getId());
     assertEquals("sys.cpu.user", p1.getLeft());
+    assertEquals("m1", p1.getLeftId());
     assertEquals(OperandType.VARIABLE, p1.getLeftType());
     assertEquals("sys.cpu.sys", p1.getRight());
+    assertEquals("m2", p1.getRightId());
     assertEquals(OperandType.VARIABLE, p1.getRightType());
     assertEquals(ExpressionOp.ADD, p1.getOperator());
   }
@@ -266,9 +257,8 @@ public class TestExpressionFactory {
   @Test
   public void setupGraph2Metrics1ThroughNode() throws Exception {
     ExpressionFactory factory = new ExpressionFactory();
-    
-    DirectedAcyclicGraph<QueryNodeConfig, DefaultEdge> graph =
-        new DirectedAcyclicGraph<QueryNodeConfig, DefaultEdge>(DefaultEdge.class);
+    MutableGraph<QueryNodeConfig> graph = GraphBuilder.directed()
+        .allowsSelfLoops(false).build();
     
     QueryNodeConfig m1 = DefaultTimeSeriesDataSourceConfig.newBuilder()
         .setMetric(MetricLiteralFilter.newBuilder()
@@ -302,37 +292,33 @@ public class TestExpressionFactory {
     QueryPlanner plan = mock(QueryPlanner.class);
     when(plan.configGraph()).thenReturn(graph);
     
-    graph.addVertex(SINK);
-    graph.addVertex(m1);
-    graph.addVertex(m2);
-    graph.addVertex(ds);
-    graph.addVertex(exp);
-    graph.addDagEdge(ds, m1);
-    graph.addDagEdge(exp, m2);
-    graph.addDagEdge(exp, ds);
-    graph.addDagEdge(SINK, exp);
+    graph.putEdge(ds, m1);
+    graph.putEdge(exp, m2);
+    graph.putEdge(exp, ds);
+    graph.putEdge(SINK, exp);
     
-    factory.setupGraph(mock(TimeSeriesQuery.class), exp, plan);
-    assertEquals(5, graph.vertexSet().size());
-    assertTrue(graph.containsVertex(m1));
-    assertTrue(graph.containsVertex(m2));
-    assertTrue(graph.containsVertex(ds));
-    assertFalse(graph.containsVertex(exp));
-    assertTrue(graph.containsVertex(SINK));
+    factory.setupGraph(mock(QueryPipelineContext.class), exp, plan);
+    assertEquals(5, graph.nodes().size());
+    assertTrue(graph.nodes().contains(m1));
+    assertTrue(graph.nodes().contains(m2));
+    assertTrue(graph.nodes().contains(ds));
+    assertFalse(graph.nodes().contains(exp));
+    assertTrue(graph.nodes().contains(SINK));
     
-    QueryNodeConfig b1 = graph.getEdgeSource(
-        graph.incomingEdgesOf(ds).iterator().next());
+    QueryNodeConfig b1 = graph.predecessors(ds).iterator().next();
     assertEquals("BinaryExpression", b1.getType());
-    assertTrue(graph.containsEdge(ds, m1));
-    assertTrue(graph.containsEdge(b1, m2));
-    assertTrue(graph.containsEdge(b1, ds));
-    assertTrue(graph.containsEdge(SINK, b1));
+    assertTrue(graph.hasEdgeConnecting(ds, m1));
+    assertTrue(graph.hasEdgeConnecting(b1, m2));
+    assertTrue(graph.hasEdgeConnecting(b1, ds));
+    assertTrue(graph.hasEdgeConnecting(SINK, b1));
     
     ExpressionParseNode p1 = (ExpressionParseNode) b1;
     assertEquals("expression", p1.getId());
     assertEquals("sys.cpu.user", p1.getLeft());
+    assertEquals("m1", p1.getLeftId());
     assertEquals(OperandType.VARIABLE, p1.getLeftType());
     assertEquals("sys.cpu.sys", p1.getRight());
+    assertEquals("m2", p1.getRightId());
     assertEquals(OperandType.VARIABLE, p1.getRightType());
     assertEquals(ExpressionOp.ADD, p1.getOperator());
   }
@@ -340,8 +326,8 @@ public class TestExpressionFactory {
   @Test
   public void setupGraph3MetricsThroughNode() throws Exception {
     ExpressionFactory factory = new ExpressionFactory();
-    DirectedAcyclicGraph<QueryNodeConfig, DefaultEdge> graph =
-        new DirectedAcyclicGraph<QueryNodeConfig, DefaultEdge>(DefaultEdge.class);
+    MutableGraph<QueryNodeConfig> graph = GraphBuilder.directed()
+        .allowsSelfLoops(false).build();
     
     QueryNodeConfig m1 = DefaultTimeSeriesDataSourceConfig.newBuilder()
         .setMetric(MetricLiteralFilter.newBuilder()
@@ -382,60 +368,55 @@ public class TestExpressionFactory {
     QueryPlanner plan = mock(QueryPlanner.class);
     when(plan.configGraph()).thenReturn(graph);
     
-    graph.addVertex(SINK);
-    graph.addVertex(m1);
-    graph.addVertex(m2);
-    graph.addVertex(m3);
-    graph.addVertex(ds);
-    graph.addVertex(exp);
-    graph.addDagEdge(ds, m1);
-    graph.addDagEdge(ds, m2);
-    graph.addDagEdge(ds, m3);
-    graph.addDagEdge(exp, ds);
-    graph.addDagEdge(SINK, exp);
+    graph.putEdge(ds, m1);
+    graph.putEdge(ds, m2);
+    graph.putEdge(ds, m3);
+    graph.putEdge(exp, ds);
+    graph.putEdge(SINK, exp);
     
-    factory.setupGraph(mock(TimeSeriesQuery.class), exp, plan);
-    assertEquals(7, graph.vertexSet().size());
-    assertTrue(graph.containsVertex(m1));
-    assertTrue(graph.containsVertex(m2));
-    assertTrue(graph.containsVertex(m3));
-    assertTrue(graph.containsVertex(ds));
-    assertFalse(graph.containsVertex(exp));
-    assertTrue(graph.containsVertex(SINK));
+    factory.setupGraph(mock(QueryPipelineContext.class), exp, plan);
+    assertEquals(7, graph.nodes().size());
+    assertTrue(graph.nodes().contains(m1));
+    assertTrue(graph.nodes().contains(m2));
+    assertTrue(graph.nodes().contains(m3));
+    assertTrue(graph.nodes().contains(ds));
+    assertFalse(graph.nodes().contains(exp));
+    assertTrue(graph.nodes().contains(SINK));
     
-    assertTrue(graph.containsEdge(ds, m1));
-    assertTrue(graph.containsEdge(ds, m2));
+    assertTrue(graph.hasEdgeConnecting(ds, m1));
+    assertTrue(graph.hasEdgeConnecting(ds, m2));
     
-    List<QueryNodeConfig> expressions = Lists.newArrayListWithCapacity(2);
-    for (final DefaultEdge edge : graph.incomingEdgesOf(ds)) {
-      expressions.add(graph.getEdgeSource(edge));
-    }
+    List<QueryNodeConfig> expressions = Lists.newArrayList(graph.predecessors(ds));
     assertEquals(2, expressions.size());
     for (final QueryNodeConfig binary : expressions) {
-      assertTrue(graph.containsEdge(binary, ds));
+      assertTrue(graph.hasEdgeConnecting(binary, ds));
       assertEquals("BinaryExpression", binary.getType());
       
       if (binary.getId().equals("expression_SubExp#0")) {
         ExpressionParseNode p1 = (ExpressionParseNode) binary;
         assertEquals("expression_SubExp#0", p1.getId());
         assertEquals("sys.cpu.user", p1.getLeft());
+        assertEquals("m1", p1.getLeftId());
         assertEquals(OperandType.VARIABLE, p1.getLeftType());
         assertEquals("sys.cpu.sys", p1.getRight());
+        assertEquals("m2", p1.getRightId());
         assertEquals(OperandType.VARIABLE, p1.getRightType());
         assertEquals(ExpressionOp.ADD, p1.getOperator());
         
-        assertFalse(graph.containsEdge(SINK, binary));
+        assertFalse(graph.hasEdgeConnecting(SINK, binary));
       } else {
         assertEquals("expression", binary.getId());
         ExpressionParseNode p1 = (ExpressionParseNode) binary;
         assertEquals("expression", p1.getId());
         assertEquals("expression_SubExp#0", p1.getLeft());
+        assertEquals("expression_SubExp#0", p1.getLeftId());
         assertEquals(OperandType.SUB_EXP, p1.getLeftType());
         assertEquals("sys.cpu.idle", p1.getRight());
+        assertEquals("m3", p1.getRightId());
         assertEquals(OperandType.VARIABLE, p1.getRightType());
         assertEquals(ExpressionOp.ADD, p1.getOperator());
         
-        assertTrue(graph.containsEdge(SINK, binary));
+        assertTrue(graph.hasEdgeConnecting(SINK, binary));
       }
     }
     
@@ -444,8 +425,8 @@ public class TestExpressionFactory {
   @Test
   public void setupGraph3MetricsComplexThroughNode() throws Exception {
     ExpressionFactory factory = new ExpressionFactory();
-    DirectedAcyclicGraph<QueryNodeConfig, DefaultEdge> graph =
-        new DirectedAcyclicGraph<QueryNodeConfig, DefaultEdge>(DefaultEdge.class);
+    MutableGraph<QueryNodeConfig> graph = GraphBuilder.directed()
+        .allowsSelfLoops(false).build();
     
     QueryNodeConfig m1 = DefaultTimeSeriesDataSourceConfig.newBuilder()
         .setMetric(MetricLiteralFilter.newBuilder()
@@ -486,104 +467,103 @@ public class TestExpressionFactory {
     QueryPlanner plan = mock(QueryPlanner.class);
     when(plan.configGraph()).thenReturn(graph);
     
-    graph.addVertex(SINK);
-    graph.addVertex(m1);
-    graph.addVertex(m2);
-    graph.addVertex(m3);
-    graph.addVertex(ds);
-    graph.addVertex(exp);
-    graph.addDagEdge(ds, m1);
-    graph.addDagEdge(ds, m2);
-    graph.addDagEdge(ds, m3);
-    graph.addDagEdge(exp, ds);
-    graph.addDagEdge(SINK, exp);
+    graph.putEdge(ds, m1);
+    graph.putEdge(ds, m2);
+    graph.putEdge(ds, m3);
+    graph.putEdge(exp, ds);
+    graph.putEdge(SINK, exp);
     
-    factory.setupGraph(mock(TimeSeriesQuery.class), exp, plan);
-    assertEquals(10, graph.vertexSet().size());
-    assertTrue(graph.containsVertex(m1));
-    assertTrue(graph.containsVertex(m2));
-    assertTrue(graph.containsVertex(m3));
-    assertTrue(graph.containsVertex(ds));
-    assertFalse(graph.containsVertex(exp));
-    assertTrue(graph.containsVertex(SINK));
+    factory.setupGraph(mock(QueryPipelineContext.class), exp, plan);
+    assertEquals(10, graph.nodes().size());
+    assertTrue(graph.nodes().contains(m1));
+    assertTrue(graph.nodes().contains(m2));
+    assertTrue(graph.nodes().contains(m3));
+    assertTrue(graph.nodes().contains(ds));
+    assertFalse(graph.nodes().contains(exp));
+    assertTrue(graph.nodes().contains(SINK));
     
-    assertTrue(graph.containsEdge(ds, m1));
-    assertTrue(graph.containsEdge(ds, m2));
+    assertTrue(graph.hasEdgeConnecting(ds, m1));
+    assertTrue(graph.hasEdgeConnecting(ds, m2));
     
-    List<QueryNodeConfig> expressions = Lists.newArrayListWithCapacity(2);
-    for (final DefaultEdge edge : graph.incomingEdgesOf(ds)) {
-      expressions.add(graph.getEdgeSource(edge));
-    }
+    List<QueryNodeConfig> expressions = Lists.newArrayList(graph.predecessors(ds));
     assertEquals(3, expressions.size());
     for (final QueryNodeConfig binary : expressions) {
-      assertTrue(graph.containsEdge(binary, ds));
+      assertTrue(graph.hasEdgeConnecting(binary, ds));
       assertEquals("BinaryExpression", binary.getType());
       if (binary.getId().equals("expression_SubExp#0")) {
         ExpressionParseNode p1 = (ExpressionParseNode) binary;
         assertEquals("expression_SubExp#0", p1.getId());
         assertEquals("sys.cpu.user", p1.getLeft());
+        assertEquals("m1", p1.getLeftId());
         assertEquals(OperandType.VARIABLE, p1.getLeftType());
         assertEquals(1024, ((NumericLiteral) p1.getRight()).longValue());
+        assertNull(p1.getRightId());
         assertEquals(OperandType.LITERAL_NUMERIC, p1.getRightType());
         assertEquals(ExpressionOp.MULTIPLY, p1.getOperator());
         
-        assertFalse(graph.containsEdge(SINK, binary));
-        assertEquals(1, graph.incomingEdgesOf(binary).size());
+        assertFalse(graph.hasEdgeConnecting(SINK, binary));
+        assertEquals(1, graph.predecessors(binary).size());
         assertEquals("expression_SubExp#2", 
-            graph.getEdgeSource(graph.incomingEdgesOf(binary).iterator().next()).getId());
+            graph.predecessors(binary).iterator().next().getId());
       } else if (binary.getId().equals("expression_SubExp#1")) {
         ExpressionParseNode p1 = (ExpressionParseNode) binary;
         assertEquals("expression_SubExp#1", p1.getId());
         assertEquals("sys.cpu.sys", p1.getLeft());
+        assertEquals("m2", p1.getLeftId());
         assertEquals(OperandType.VARIABLE, p1.getLeftType());
         assertEquals(1024, ((NumericLiteral) p1.getRight()).longValue());
+        assertNull(p1.getRightId());
         assertEquals(OperandType.LITERAL_NUMERIC, p1.getRightType());
         assertEquals(ExpressionOp.MULTIPLY, p1.getOperator());
         
-        assertFalse(graph.containsEdge(SINK, binary));
-        assertEquals(1, graph.incomingEdgesOf(binary).size());
-        QueryNodeConfig b2 = graph.getEdgeSource(
-            graph.incomingEdgesOf(binary).iterator().next());
+        assertFalse(graph.hasEdgeConnecting(SINK, binary));
+        assertEquals(1, graph.predecessors(binary).size());
+        QueryNodeConfig b2 = graph.predecessors(binary).iterator().next();
         assertEquals("expression_SubExp#2", b2.getId());
         
         // validate sub2 here
         p1 = (ExpressionParseNode) b2;
         assertEquals("expression_SubExp#2", p1.getId());
         assertEquals("expression_SubExp#0", p1.getLeft());
+        assertEquals("expression_SubExp#0", p1.getLeftId());
         assertEquals(OperandType.SUB_EXP, p1.getLeftType());
         assertEquals("expression_SubExp#1", p1.getRight());
+        assertEquals("expression_SubExp#1", p1.getRightId());
         assertEquals(OperandType.SUB_EXP, p1.getRightType());
         assertEquals(ExpressionOp.ADD, p1.getOperator());
         
-        assertFalse(graph.containsEdge(SINK, b2));
+        assertFalse(graph.hasEdgeConnecting(SINK, b2));
         
       } else if (binary.getId().equals("expression_SubExp#3")) {
         ExpressionParseNode p1 = (ExpressionParseNode) binary;
         assertEquals("expression_SubExp#3", p1.getId());
         assertEquals("sys.cpu.idle", p1.getLeft());
+        assertEquals("m3", p1.getLeftId());
         assertEquals(OperandType.VARIABLE, p1.getLeftType());
         assertEquals(1024, ((NumericLiteral) p1.getRight()).longValue());
+        assertNull(p1.getRightId());
         assertEquals(OperandType.LITERAL_NUMERIC, p1.getRightType());
         assertEquals(ExpressionOp.MULTIPLY, p1.getOperator());
         
-        assertFalse(graph.containsEdge(SINK, binary));
-        assertEquals(1, graph.incomingEdgesOf(binary).size());
+        assertFalse(graph.hasEdgeConnecting(SINK, binary));
+        assertEquals(1, graph.predecessors(binary).size());
         
         // validate the expression here
-        QueryNodeConfig b2 = graph.getEdgeSource(
-            graph.incomingEdgesOf(binary).iterator().next());
+        QueryNodeConfig b2 = graph.predecessors(binary).iterator().next();
         assertEquals("expression", b2.getId());
         
         // validate parent here
         p1 = (ExpressionParseNode) b2;
         assertEquals("expression", p1.getId());
         assertEquals("expression_SubExp#2", p1.getLeft());
+        assertEquals("expression_SubExp#2", p1.getLeftId());
         assertEquals(OperandType.SUB_EXP, p1.getLeftType());
         assertEquals("expression_SubExp#3", p1.getRight());
+        assertEquals("expression_SubExp#3", p1.getRightId());
         assertEquals(OperandType.SUB_EXP, p1.getRightType());
         assertEquals(ExpressionOp.ADD, p1.getOperator());
         
-        assertTrue(graph.containsEdge(SINK, b2));
+        assertTrue(graph.hasEdgeConnecting(SINK, b2));
       }
     }
     

@@ -17,33 +17,62 @@ package net.opentsdb.configuration.provider;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.fail;
+import static org.mockito.Matchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import java.io.File;
 import java.io.FileInputStream;
-import java.util.Collections;
 import java.util.Properties;
-import java.util.Set;
 
+import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.powermock.api.mockito.PowerMockito;
 import org.powermock.core.classloader.annotations.PrepareForTest;
 import org.powermock.modules.junit4.PowerMockRunner;
 
+import com.google.common.hash.HashCode;
+import com.google.common.hash.HashFunction;
+import com.google.common.io.ByteSource;
+import com.google.common.io.Files;
+
 import io.netty.util.HashedWheelTimer;
+import net.opentsdb.common.Const;
 import net.opentsdb.configuration.Configuration;
 import net.opentsdb.configuration.ConfigurationException;
 import net.opentsdb.configuration.ConfigurationOverride;
 
 @RunWith(PowerMockRunner.class)
-@PrepareForTest({ FileInputStream.class, PropertiesFileProvider.class, File.class })
+@PrepareForTest({ PropertiesFileProvider.class, File.class, Files.class })
 public class TestPropertiesFileProvider {
-  private ProviderFactory factory = mock(ProviderFactory.class);
-  private Configuration config = mock(Configuration.class);
-  private HashedWheelTimer timer = mock(HashedWheelTimer.class);
-  private Set<String> reload_keys = Collections.emptySet();
+  private ProviderFactory factory;
+  private Configuration config;
+  private HashedWheelTimer timer;
+  private ByteSource source;
+  private File file;
+  private HashCode hash;
+  
+  @Before
+  public void before() throws Exception {
+    factory = mock(ProviderFactory.class);
+    config = mock(Configuration.class);
+    timer = mock(HashedWheelTimer.class);
+    source = mock(ByteSource.class);
+    file = mock(File.class);
+    
+    when(file.exists()).thenReturn(true);
+    
+    PowerMockito.whenNew(File.class)
+      .withAnyArguments()
+      .thenReturn(file);
+    
+    PowerMockito.mockStatic(Files.class);
+    when(Files.asByteSource(any(File.class))).thenReturn(source);
+    
+    hash = Const.HASH_FUNCTION().hashInt(1);
+    when(source.hash(any(HashFunction.class))).thenReturn(hash);
+  }
   
   @Test
   public void ctorDefault() throws Exception {
@@ -51,7 +80,7 @@ public class TestPropertiesFileProvider {
       .withAnyArguments()
       .thenReturn(mock(File.class));
     try {
-      new PropertiesFileProvider(factory, config, timer, reload_keys).close();;
+      new PropertiesFileProvider(factory, config, timer).close();;
       fail("Expected ConfigurationException");
     } catch (ConfigurationException e) { }
     
@@ -64,13 +93,13 @@ public class TestPropertiesFileProvider {
     PowerMockito.whenNew(FileInputStream.class)
       .withAnyArguments()
       .thenReturn(mock(FileInputStream.class));
-    new PropertiesFileProvider(factory, config, timer, reload_keys).close();
+    new PropertiesFileProvider(factory, config, timer).close();
   }
   
   @Test
   public void ctorNoProtocol() throws Exception {
     try {
-      new PropertiesFileProvider(factory, config, timer, reload_keys, 
+      new PropertiesFileProvider(factory, config, timer, 
           "opentsdb.conf").close();
       fail("Expected IllegalArgumentException");
     } catch (IllegalArgumentException e) { }
@@ -78,10 +107,10 @@ public class TestPropertiesFileProvider {
   
   @Test
   public void ctorWithFile() throws Exception {
-    new PropertiesFileProvider(factory, config, timer, reload_keys, 
+    new PropertiesFileProvider(factory, config, timer, 
         "file://opentsdb.conf").close();
     
-    new PropertiesFileProvider(factory, config, timer, reload_keys, 
+    new PropertiesFileProvider(factory, config, timer, 
         "FiLe://opentsdb.conf").close();
   }
   
@@ -103,7 +132,7 @@ public class TestPropertiesFileProvider {
       .withAnyArguments()
       .thenReturn(mock(FileInputStream.class));
     final PropertiesFileProvider provider = new PropertiesFileProvider(factory, 
-        config, timer, reload_keys, "file://opentsdb.conf");
+        config, timer, "file://opentsdb.conf");
     
     assertEquals(2, provider.cache().size());
     assertEquals("foo", provider.cache().get("tsd.conf"));
@@ -111,6 +140,10 @@ public class TestPropertiesFileProvider {
     
     // key change
     properties.put("key.2", "24");
+    hash = Const.HASH_FUNCTION().hashInt(2);
+    when(source.hash(any(HashFunction.class))).thenReturn(hash);
+    PowerMockito.whenNew(Properties.class).withAnyArguments()
+      .thenReturn(properties);
     provider.reload();
     
     assertEquals(2, provider.cache().size());
@@ -120,6 +153,11 @@ public class TestPropertiesFileProvider {
     // drop and add
     properties.remove("key.2");
     properties.put("key.3", "boo!");
+    
+    hash = Const.HASH_FUNCTION().hashInt(3);
+    when(source.hash(any(HashFunction.class))).thenReturn(hash);
+    PowerMockito.whenNew(Properties.class).withAnyArguments()
+      .thenReturn(properties);
     provider.reload();
     
     assertEquals(2, provider.cache().size());
@@ -143,7 +181,7 @@ public class TestPropertiesFileProvider {
       .withAnyArguments()
       .thenReturn(mock(FileInputStream.class));
     final PropertiesFileProvider provider = new PropertiesFileProvider(factory, config, 
-        timer, reload_keys, "file://opentsdb.conf");
+        timer, "file://opentsdb.conf");
     
     assertNull(provider.getSetting("no.such.key"));
     ConfigurationOverride override = provider.getSetting("tsd.conf");

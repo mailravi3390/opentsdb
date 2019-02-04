@@ -1,4 +1,3 @@
-package net.opentsdb.query.hacluster;
 // This file is part of OpenTSDB.
 // Copyright (C) 2017-2018  The OpenTSDB Authors.
 //
@@ -13,6 +12,7 @@ package net.opentsdb.query.hacluster;
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+package net.opentsdb.query.hacluster;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertSame;
@@ -25,28 +25,18 @@ import org.junit.Test;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.google.common.collect.Lists;
 
-import net.opentsdb.core.DefaultRegistry;
 import net.opentsdb.core.MockTSDB;
 import net.opentsdb.core.MockTSDBDefault;
 import net.opentsdb.data.types.numeric.NumericType;
+import net.opentsdb.query.DefaultTimeSeriesDataSourceConfig;
 import net.opentsdb.query.QueryFillPolicy.FillWithRealPolicy;
+import net.opentsdb.query.TimeSeriesDataSourceConfig;
+import net.opentsdb.query.filter.MetricLiteralFilter;
 import net.opentsdb.query.interpolation.types.numeric.NumericInterpolatorConfig;
 import net.opentsdb.query.pojo.FillPolicy;
 import net.opentsdb.utils.JSON;
 
 public class TestHAClusterConfig {
-  
-  private NumericInterpolatorConfig numeric_config;
-  
-  @Before
-  public void before() throws Exception {
-    numeric_config = 
-          (NumericInterpolatorConfig) NumericInterpolatorConfig.newBuilder()
-      .setFillPolicy(FillPolicy.NOT_A_NUMBER)
-      .setRealFillPolicy(FillWithRealPolicy.PREFER_NEXT)
-      .setDataType(NumericType.TYPE.toString())
-      .build();
-  }
   
   @Test
   public void builder() throws Exception {
@@ -54,7 +44,10 @@ public class TestHAClusterConfig {
         .setDataSources(Lists.newArrayList("colo1", "colo2"))
         .setMergeAggregator("sum")
         .setSecondaryTimeout("5s")
-        .addInterpolatorConfig(numeric_config)
+        .setPrimaryTimeout("10s")
+        .setMetric(MetricLiteralFilter.newBuilder()
+            .setMetric("sys.cpu.user")
+            .build())
         .setId("ha")
         .build();
     
@@ -63,15 +56,18 @@ public class TestHAClusterConfig {
     assertTrue(config.getDataSources().contains("colo2"));
     assertEquals("sum", config.getMergeAggregator());
     assertEquals("5s", config.getSecondaryTimeout());
+    assertEquals("10s", config.getPrimaryTimeout());
     assertEquals("ha", config.getId());
-    assertSame(numeric_config, config.interpolatorConfigs().get(NumericType.TYPE));
     
     try {
       HAClusterConfig.newBuilder()
           .setDataSources(Lists.newArrayList())
           .setMergeAggregator("sum")
           .setSecondaryTimeout("5s")
-          .addInterpolatorConfig(numeric_config)
+          .setPrimaryTimeout("10s")
+//          .setMetric(MetricLiteralFilter.newBuilder()
+//              .setMetric("sys.cpu.user")
+//              .build())
           .setId("ha")
           .build();
       fail("Expected IllegalArgumentException");
@@ -79,47 +75,32 @@ public class TestHAClusterConfig {
     
     try {
       HAClusterConfig.newBuilder()
-          //.setSources(Lists.newArrayList("colo1", "colo2"))
-          .setMergeAggregator("sum")
-          .setSecondaryTimeout("5s")
-          .addInterpolatorConfig(numeric_config)
-          .setId("ha")
-          .build();
-      fail("Expected IllegalArgumentException");
-    } catch (IllegalArgumentException e) { }
-    
-    try {
-      HAClusterConfig.newBuilder()
-          .setDataSources(Lists.newArrayList("colo1", "colo2"))
-          .setMergeAggregator("")
-          .setSecondaryTimeout("5s")
-          .addInterpolatorConfig(numeric_config)
-          .setId("ha")
-          .build();
-      fail("Expected IllegalArgumentException");
-    } catch (IllegalArgumentException e) { }
-    
-    try {
-      HAClusterConfig.newBuilder()
-          .setDataSources(Lists.newArrayList("colo1", "colo2"))
-          //.setMergeAggregator("sum")
-          .setSecondaryTimeout("5s")
-          .addInterpolatorConfig(numeric_config)
-          .setId("ha")
-          .build();
-      fail("Expected IllegalArgumentException");
-    } catch (IllegalArgumentException e) { }
-    
-    try {
-      HAClusterConfig.newBuilder()
-          .setDataSources(Lists.newArrayList("colo1", "colo2"))
+          .setDataSources(Lists.newArrayList())
           .setMergeAggregator("sum")
           .setSecondaryTimeout("notaduration")
-          .addInterpolatorConfig(numeric_config)
+          .setPrimaryTimeout("10s")
+          .setMetric(MetricLiteralFilter.newBuilder()
+              .setMetric("sys.cpu.user")
+              .build())
           .setId("ha")
           .build();
       fail("Expected IllegalArgumentException");
     } catch (IllegalArgumentException e) { }
+    
+    try {
+      HAClusterConfig.newBuilder()
+          .setDataSources(Lists.newArrayList())
+          .setMergeAggregator("sum")
+          .setSecondaryTimeout("5s")
+          .setPrimaryTimeout("notaduration")
+          .setMetric(MetricLiteralFilter.newBuilder()
+              .setMetric("sys.cpu.user")
+              .build())
+          .setId("ha")
+          .build();
+      fail("Expected IllegalArgumentException");
+    } catch (IllegalArgumentException e) { }
+    
   }
 
   @Test
@@ -128,7 +109,10 @@ public class TestHAClusterConfig {
         .setDataSources(Lists.newArrayList("colo1", "colo2"))
         .setMergeAggregator("sum")
         .setSecondaryTimeout("5s")
-        .addInterpolatorConfig(numeric_config)
+        .setPrimaryTimeout("10s")
+        .setMetric(MetricLiteralFilter.newBuilder()
+            .setMetric("sys.cpu.user")
+            .build())
         .setId("ha")
         .build();
     
@@ -137,7 +121,7 @@ public class TestHAClusterConfig {
     assertTrue(json.contains("\"dataSources\":[\"colo1\",\"colo2\"]"));
     assertTrue(json.contains("\"mergeAggregator\":\"sum\""));
     assertTrue(json.contains("\"secondaryTimeout\":\"5s\""));
-    assertTrue(json.contains("\"interpolatorConfigs\":["));
+    assertTrue(json.contains("\"primaryTimeout\":\"10s\""));
     
     MockTSDB tsdb = MockTSDBDefault.getMockTSDB();
     JsonNode node = JSON.getMapper().readTree(json);
@@ -148,9 +132,8 @@ public class TestHAClusterConfig {
     assertTrue(config.getDataSources().contains("colo2"));
     assertEquals("sum", config.getMergeAggregator());
     assertEquals("5s", config.getSecondaryTimeout());
+    assertEquals("10s", config.getPrimaryTimeout());
     assertEquals("ha", config.getId());
-    assertEquals(numeric_config.getFillPolicy(), ((NumericInterpolatorConfig)
-        config.interpolatorConfigs().get(NumericType.TYPE)).getFillPolicy());
   }
   
 //  @Test
@@ -286,4 +269,20 @@ public class TestHAClusterConfig {
 //    assertEquals(1, c1.compareTo(c2));
 //  }
   
+  @Test
+  public void newBuilderFromSource() throws Exception {
+    TimeSeriesDataSourceConfig config = (TimeSeriesDataSourceConfig) 
+        DefaultTimeSeriesDataSourceConfig.newBuilder()
+        .setMetric(MetricLiteralFilter.newBuilder()
+            .setMetric("system.cpu.user")
+            .build())
+        .setFilterId("f1")
+        .setId("m1")
+        .build();
+    
+    HAClusterConfig ha = (HAClusterConfig) 
+        HAClusterConfig.newBuilder(config, HAClusterConfig.newBuilder())
+        .build();
+    assertEquals("system.cpu.user", ha.getMetric().getMetric());
+  }
 }

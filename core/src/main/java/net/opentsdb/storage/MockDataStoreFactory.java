@@ -32,6 +32,7 @@ import net.opentsdb.data.TimeSeriesStringId;
 import net.opentsdb.query.QueryNode;
 import net.opentsdb.query.QueryNodeConfig;
 import net.opentsdb.query.QueryPipelineContext;
+import net.opentsdb.query.TimeSeriesDataSourceConfig;
 import net.opentsdb.query.BaseTimeSeriesDataSourceConfig;
 import net.opentsdb.query.DefaultTimeSeriesDataSourceConfig;
 import net.opentsdb.query.TimeSeriesQuery;
@@ -59,8 +60,15 @@ public class MockDataStoreFactory extends BaseTSDBPlugin
   }
 
   @Override
-  public void setupGraph(TimeSeriesQuery query, QueryNodeConfig config,
-      QueryPlanner planner) {
+  public boolean supportsQuery(final TimeSeriesQuery query, 
+                               final TimeSeriesDataSourceConfig config) {
+    return true;
+  }
+  
+  @Override
+  public void setupGraph(final QueryPipelineContext context, 
+                         final QueryNodeConfig config,
+                         final QueryPlanner planner) {
     // TODO Auto-generated method stub
     
   }
@@ -127,4 +135,5 @@ public class MockDataStoreFactory extends BaseTSDBPlugin
       final Span span) {
     return Deferred.fromError(new UnsupportedOperationException());
   }
+  
 }
