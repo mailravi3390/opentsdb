@@ -35,6 +35,7 @@ import net.opentsdb.configuration.ConfigurationEntrySchema;
 import net.opentsdb.core.DefaultTSDB;
 import net.opentsdb.servlet.applications.OpenTSDBApplication;
 import net.opentsdb.servlet.filter.AuthFilter;
+import net.opentsdb.stats.BlackholeStatsCollector;
 import net.opentsdb.utils.ArgP;
 import net.opentsdb.utils.RefreshingSSLContext;
 import net.opentsdb.utils.RefreshingSSLContext.SourceType;
@@ -83,6 +84,9 @@ public class TSDMain {
   public static final String CORS_PATTERN_KEY = "tsd.http.request.cors.pattern";
   public static final String CORS_HEADERS_KEY = "tsd.http.request.cors.headers";
   public static final String DIRECTORY_KEY = "tsd.http.staticroot";
+  
+  public static final String READ_TO_KEY = "tsd.network.read_timeout";
+  public static final String WRITE_TO_KEY = "tsd.network.write_timeout";
   
   /** Defaults */
   public static final String DEFAULT_PATH = "/";
@@ -177,6 +181,12 @@ public class TSDMain {
         + "will be passed to clients.");
     config.register(DIRECTORY_KEY, null, false, 
         "The path to a directory to host at the root for hosting files.");
+    config.register(READ_TO_KEY, 5 * 60 * 1000, false, 
+        "A timeout in milliseconds for reading data from a client after which "
+        + "Undertow will close the connection.");
+    config.register(WRITE_TO_KEY, 5 * 60 * 1000, false, 
+        "A timeout in milliseconds for writing data to a client after which "
+        + "Undertow will close the connection.");
     
     int port = config.getInt(HTTP_PORT_KEY);
     int ssl_port = config.getInt(TLS_PORT_KEY);
@@ -299,6 +309,11 @@ public class TSDMain {
           .build(null)
           .wrap(handler);
       
+      if (tsdb.getStatsCollector() != null && 
+          !(tsdb.getStatsCollector() instanceof BlackholeStatsCollector)) {
+        handler = new MetricsHandler(tsdb.getStatsCollector(), handler);
+      }
+      
       final Builder builder = Undertow.builder()
           .setHandler(handler);
       if (port > 0) {
@@ -320,6 +335,10 @@ public class TSDMain {
         builder.setSocketOption(Options.SSL_CLIENT_AUTH_MODE, 
             SslClientAuthMode.valueOf(config.getString(TLS_VERIFY_CLIENT_KEY)));
       }
+      
+      // https://issues.jboss.org/browse/UNDERTOW-991
+      builder.setSocketOption(Options.READ_TIMEOUT, config.getInt(READ_TO_KEY));
+      builder.setSocketOption(Options.WRITE_TIMEOUT, config.getInt(WRITE_TO_KEY));
       
       server = builder.build();
       server.start();

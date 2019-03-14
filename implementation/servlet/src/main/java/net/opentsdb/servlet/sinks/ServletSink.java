@@ -24,6 +24,8 @@ import org.slf4j.LoggerFactory;
 import com.google.common.collect.ImmutableMap;
 import com.stumbleupon.async.Callback;
 
+import net.opentsdb.data.PartialTimeSeries;
+import net.opentsdb.data.PartialTimeSeriesSet;
 import net.opentsdb.exceptions.QueryExecutionException;
 import net.opentsdb.query.QueryContext;
 import net.opentsdb.query.QueryMode;
@@ -86,6 +88,24 @@ public class ServletSink implements QuerySink {
       throw new IllegalArgumentException("Factory returned a null "
           + "instance for the type: " + config.serdesOptions().getType());
     }
+  }
+  
+  @Override
+  public void onComplete(final PartialTimeSeriesSet set) {
+    serdes.complete(set, null /** TODO */).addBoth(
+        new Callback<Object, Object>() {
+
+          @Override
+          public Object call(final Object arg) throws Exception {
+            if (arg != null && 
+                !(arg instanceof Throwable) && 
+                (boolean) arg == true) {
+              onComplete();
+            }
+            return null;
+          }
+      
+    });
   }
   
   @Override
@@ -194,6 +214,24 @@ public class ServletSink implements QuerySink {
     }
   }
 
+  @Override
+  public void onNext(final PartialTimeSeries next) {
+    serdes.serialize(next, null /** TODO */).addBoth(
+        new Callback<Object, Object>() {
+
+          @Override
+          public Object call(final Object arg) throws Exception {
+            if (arg != null && 
+                !(arg instanceof Throwable) && 
+                (boolean) arg == true) {
+              onComplete();
+            }
+            return null;
+          }
+      
+    });
+  }
+  
   @Override
   public void onError(final Throwable t) {
     LOG.error("Exception for query: " 

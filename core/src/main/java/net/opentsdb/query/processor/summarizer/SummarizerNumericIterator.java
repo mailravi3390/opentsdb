@@ -14,8 +14,11 @@
 // limitations under the License.
 package net.opentsdb.query.processor.summarizer;
 
+import java.util.Collection;
 import java.util.Iterator;
+import java.util.List;
 
+import com.google.common.collect.Lists;
 import com.google.common.reflect.TypeToken;
 
 import net.opentsdb.data.TimeSeries;
@@ -34,7 +37,7 @@ import net.opentsdb.query.QueryResult;
 
 /**
  * The iterator that handles summarizing arrays, numerics and other
- * summaries. TODO!
+ * summaries.
  * 
  * @since 3.0
  */
@@ -76,7 +79,6 @@ public class SummarizerNumericIterator implements QueryIterator {
                             final TimeSeries source) {
     this.node = node;
     this.result = result;
-    
     // pick one and only one
     // TODO - what if we have more than one??
     if (source.types().contains(NumericArrayType.TYPE)) {
@@ -86,10 +88,8 @@ public class SummarizerNumericIterator implements QueryIterator {
       iterator = source.iterator(NumericType.TYPE).get();
       type = NumericType.TYPE;
     } else if (source.types().contains(NumericSummaryType.TYPE)) {
-      // TODO !
-      // hopefully it's a rollup series, not a summarizer
-      //iterator = source.iterator(NumericSummaryType.TYPE).get();
-      //type = NumericSummaryType.TYPE;
+      iterator = source.iterator(NumericSummaryType.TYPE).get();
+      type = NumericSummaryType.TYPE;
     } else {
       // nothing to do here.
     }
@@ -142,7 +142,41 @@ public class SummarizerNumericIterator implements QueryIterator {
         }
       }
     } else if (type == NumericSummaryType.TYPE) {
-      // TODO!!!
+      long_values = new long[8];
+      boolean got_timestamp = false;
+      while (iterator.hasNext()) {
+        final TimeSeriesValue<NumericSummaryType> value =
+            (TimeSeriesValue<NumericSummaryType>) iterator.next();
+
+        if (!got_timestamp) {
+          dp.resetTimestamp(value.timestamp());
+          got_timestamp = true;
+        }
+
+        if (value.value() != null) {
+          Collection<Integer> summaries =
+              ((TimeSeriesValue<NumericSummaryType>) value)
+                  .value()
+                  .summariesAvailable();
+          if (summaries == null || summaries.isEmpty()) {
+            throw new IllegalArgumentException("Summaries not found in the summarizer!");
+          }
+
+          if (summaries.size() == 1) {
+            NumericType val = value.value().value(summaries.iterator().next());
+            if (val.isInteger()) {
+              store(val.longValue());
+            } else {
+              store(val.doubleValue());
+            }
+          } else {
+            // TODO
+            dp.resetNull(iterator.next().timestamp());
+            has_next = false;
+            return dp;
+          }
+        }
+      }
     }
     
     final MutableNumericValue number = new MutableNumericValue();

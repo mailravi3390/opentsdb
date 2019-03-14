@@ -138,7 +138,6 @@ public class NamespacedAggregatedDocumentSchema extends BaseTSDBPlugin implement
         NamespacedAggregatedDocumentQueryBuilder.newBuilder(query).build();
 
 
-    LOG.info("Running ES Query: " + search_source_builder);
     if (LOG.isTraceEnabled()) {
       LOG.trace("Running ES Query: " + search_source_builder);
     }
@@ -404,10 +403,9 @@ public class NamespacedAggregatedDocumentSchema extends BaseTSDBPlugin implement
                       + tsdb.getConfig().getInt(MAX_CARD_KEY));
               }
               result = new NamespacedAggregatedDocumentResult(
-                      max_hits > 0 ? MetaResult.DATA :
-                       tsdb.getConfig().getBoolean(ESClusterClient.FALLBACK_ON_NO_DATA_KEY)
-                        ? MetaResult.NO_DATA_FALLBACK : MetaResult.NO_DATA, null,
-                      query);
+                tsdb.getConfig().getBoolean(ESClusterClient.FALLBACK_ON_NO_DATA_KEY)
+                  ? MetaResult.NO_DATA_FALLBACK : MetaResult.NO_DATA, null,
+                query);
               result.setTotalHits(response.getHits().getTotalHits());
               if (child != null) {
                 child.setSuccessTags()
@@ -417,7 +415,6 @@ public class NamespacedAggregatedDocumentSchema extends BaseTSDBPlugin implement
               return result;
             }
           }
-
           result = new NamespacedAggregatedDocumentResult(
               max_hits > 0 ? MetaResult.DATA :
                 tsdb.getConfig().getBoolean(ESClusterClient.FALLBACK_ON_NO_DATA_KEY)
@@ -708,13 +705,13 @@ public class NamespacedAggregatedDocumentSchema extends BaseTSDBPlugin implement
           }
         }
       } else {
-        String metric_without_namespace = metric.substring(metric.indexOf
-          (".") + 1);
+        int idx = metric.indexOf(".");
+        final String metric_only = metric.substring(idx + 1).toLowerCase();
         if (result == null) {
           result = new NamespacedAggregatedDocumentResult(MetaResult.DATA,
                   query, meta_query);
         }
-        result.addTimeSeries(buildTimeseries(metric, tags), meta_query, metric_without_namespace);
+          result.addTimeSeries(buildTimeseries(metric, tags), meta_query, metric_only);
       }
     }
     return result;
@@ -732,5 +729,4 @@ public class NamespacedAggregatedDocumentSchema extends BaseTSDBPlugin implement
     BaseTimeSeriesStringId timeseries = builder.build();
     return timeseries;
   }
-
 }
